@@ -538,18 +538,29 @@
       unknown[code] = (unknown[code] || 0) + 1; store();
       say('✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
     }
-    const i = hits.find(h => counts[h] < need(h)) ?? hits[0];
-    counts[i]++; history.push(i); lastIdx = i; store();
-    const st = status(i);
-    if (st === 'over') { say(`⚠ TOO MANY: ${label(i)} — ${counts[i]} / ${need(i)}`, 'bad'); beep(false); }
-    else if (st === 'done') { say(`✓ COMPLETE: ${label(i)} — ${counts[i]} / ${need(i)}`, 'ok'); beep(true); }
-    else { say(`+1 ${label(i)} — ${counts[i]} / ${need(i)}`, 'part'); beep(true); }
+    // a scan fills the line with the full ordered quantity; adjust with − / + if fewer are packed
+    const i = hits.find(h => counts[h] < need(h));
+    if (i === undefined) {
+      lastIdx = hits[0];
+      say(`Already done: ${label(hits[0])} — ${counts[hits[0]]} / ${need(hits[0])}. Use − / + to adjust.`, 'part'); beep(false);
+      render(true); return;
+    }
+    setCount(i, need(i));
+    say(`✓ ${label(i)} — ${counts[i]} / ${need(i)}`, 'ok'); beep(true);
     render(true);
+  }
+  // every change remembers the previous count, so Undo puts it back exactly
+  function setCount(i, n) {
+    history.push({i, prev: counts[i]});
+    counts[i] = Math.max(0, n); lastIdx = i; store();
   }
 
   function undo() {
     if (!history.length) return;
-    const i = history.pop(); counts[i] = Math.max(0, counts[i] - 1); lastIdx = i; store();
+    const h = history.pop();
+    const i = typeof h === 'number' ? h : h.i;                 // older saved progress stored only the line
+    counts[i] = typeof h === 'number' ? Math.max(0, counts[i] - 1) : h.prev;
+    lastIdx = i; store();
     say(`Undone: ${label(i)} — ${counts[i]} / ${need(i)}`, 'part');
     render(true);
   }
@@ -606,8 +617,8 @@
     html += '</tbody></table>';
     $('#tablewrap').className = 'tablewrap';
     $('#tablewrap').innerHTML = html;
-    document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { const i = +b.dataset.p; counts[i]++; history.push(i); lastIdx = i; store(); render(); });
-    document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { const i = +b.dataset.m; counts[i] = Math.max(0, counts[i]-1); lastIdx = i; store(); render(); });
+    document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { const i = +b.dataset.p; setCount(i, counts[i] + 1); render(); });
+    document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { const i = +b.dataset.m; if (counts[i] > 0) setCount(i, counts[i] - 1); render(); });
 
     const u = Object.entries(unknown);
     $('#unknown').innerHTML = u.length ? 'Scanned but not in this order: ' + u.map(([k,v]) => `<span style="font-family:var(--mono)">${esc(k)}</span> ×${v}`).join(', ') : '';
