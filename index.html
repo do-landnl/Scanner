@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/barcode-detector@2.3.1/dist/iife/pure.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <style>
   /* Layout: sticky scan console on top (the only thing the packer looks at), order lines below as a pick list. */
   :root{
@@ -88,6 +89,12 @@
   /* the scanned row scrolls into view just below the sticky header (height measured in script) */
   tbody tr{scroll-margin-top:calc(var(--hh, 0px) + 8px);scroll-margin-bottom:12px}
   header{grid-template-columns:minmax(0,1fr)} header>*{min-width:0}
+  #sharebox{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:grid;place-items:center;padding:16px}
+  .sharecard{background:var(--card);color:var(--fg);border-radius:12px;padding:16px;width:min(420px,100%);display:grid;gap:10px;justify-items:center;text-align:center;max-height:100%;overflow:auto}
+  #shareqr img{width:min(300px,70vw);height:auto;image-rendering:pixelated;background:#fff;padding:6px;border-radius:6px}
+  #sharelink{width:100%;font:13px var(--mono);padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+  .sharebtns{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+  a.btn{font:500 14px var(--sans);padding:8px 12px;border:1px solid #1f9d55;background:#25d366;color:#08311a;border-radius:8px;text-decoration:none}
   #camBtn{background:var(--accent);color:var(--card);border-color:var(--accent);font-weight:700;padding:0 16px;white-space:nowrap;flex:none}
   #camBtn.on{background:var(--bad-ink);border-color:var(--bad-ink);color:var(--card)}
   .eansub{display:none;font:500 12px var(--mono);color:var(--mute);margin-top:2px}
@@ -132,6 +139,7 @@
       <input id="photo" type="file" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;left:-9999px" tabindex="-1" aria-hidden="true">
       <button id="kbd" title="Show the on-screen keyboard to type a barcode by hand">Keyboard</button>
       <button id="export">Export Excel</button>
+      <button id="share" title="Make a link / QR code that opens this order on a phone">Share link</button>
       <button id="reset">Reset scans</button>
     </div>
   </div>
@@ -146,6 +154,19 @@
       <button id="torch" class="mini" hidden>Light</button>
       <button id="flipcam" class="mini">Switch camera</button>
       <span class="note" id="camnote">Hold the barcode flat and horizontal along the red line, 10–20 cm away. One beep = one unit. Move the product away before the next unit of the same item.</span>
+    </div>
+  </div>
+  <div id="sharebox" hidden>
+    <div class="sharecard" role="dialog" aria-label="Share this order">
+      <b id="sharetitle">Open this order on a phone</b>
+      <div id="shareqr"></div>
+      <p class="note" id="sharehint">Scan the QR code with the iPhone camera, or send the link on WhatsApp. The link contains only barcodes, quantities and product names — no customer details.</p>
+      <input id="sharelink" readonly>
+      <div class="sharebtns">
+        <button id="sharecopy">Copy link</button>
+        <a id="sharewa" class="btn" target="_blank" rel="noopener">Send on WhatsApp</a>
+        <button id="shareclose">Close</button>
+      </div>
     </div>
   </div>
   <div id="confirmReset" hidden>Clear all scans for this order? <button id="yesReset">Yes, clear</button><button id="noReset">Cancel</button></div>
@@ -228,7 +249,7 @@
   // Only the filter box and the column dropdowns may take focus away (while you use them).
   const mayHoldFocus = el => el && (el.id === 'search' || el.tagName === 'SELECT');
   const lock = () => {
-    if (camOn || picking) return;   // camera on or photo being taken: leave focus alone
+    if (camOn || picking || !$('#sharebox').hidden) return;   // camera, photo or share window open: leave focus alone
     const a = document.activeElement;
     if (a !== scan && !mayHoldFocus(a)) scan.focus({preventScroll:true});
     paintReady();
@@ -589,6 +610,64 @@
       }
     }
   }
+
+  // ---------- share link: the order travels inside the link (after #, never sent to any server) ----------
+  const b64url = bytes => { let s = ''; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); };
+  const unb64url = str => { const s = atob(str.replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from(s, c => c.charCodeAt(0)); };
+  async function squeeze(text) {
+    const cs = new Blob([text]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    return b64url(new Uint8Array(await new Response(cs).arrayBuffer()));
+  }
+  async function unsqueeze(str) {
+    const ds = new Blob([unb64url(str)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return await new Response(ds).text();
+  }
+  const orderId = () => fileName.replace(/\.(xlsx|xls|csv)$/i, '') || 'order';
+
+  async function makeLink() {
+    const lines = rows.map(r => [normEan(r[map.ean]) ? showEan(r[map.ean]) : '', need(rows.indexOf(r)),
+      map.name >= 0 ? String(r[map.name] ?? '').replace(/[\t\n]/g, ' ') : ''].join('\t')).join('\n');
+    const base = location.href.split('#')[0].split('?')[0];
+    const id = encodeURIComponent(orderId());
+    try { return `${base}#o=${id}&z=${await squeeze(lines)}`; }
+    catch(e) { return `${base}#o=${id}&t=${encodeURIComponent(lines)}`; }
+  }
+
+  $('#share').onclick = async () => {
+    if (!rows.length) { say('Open an order file first, then tap Share link.', 'bad'); return; }
+    const link = await makeLink();
+    $('#sharetitle').textContent = 'Open order ' + orderId() + ' on a phone';
+    $('#sharelink').value = link;
+    $('#sharewa').href = 'https://wa.me/?text=' + encodeURIComponent('Qogita order ' + orderId() + ' to pack: ' + link);
+    const q = $('#shareqr'); q.innerHTML = '';
+    try {
+      const qr = qrcode(0, 'L'); qr.addData(link); qr.make();
+      const img = new Image(); img.alt = 'QR code for this order'; img.src = qr.createDataURL(4, 2); q.append(img);
+    } catch(e) { q.innerHTML = '<p class="note">This order is too big for a QR code. Use Copy link or WhatsApp.</p>'; }
+    $('#sharebox').hidden = false;
+  };
+  $('#shareclose').onclick = () => { $('#sharebox').hidden = true; lock(); };
+  $('#sharebox').addEventListener('click', e => { if (e.target.id === 'sharebox') { $('#sharebox').hidden = true; lock(); } });
+  $('#sharecopy').onclick = async () => {
+    const inp = $('#sharelink');
+    try { await navigator.clipboard.writeText(inp.value); $('#sharecopy').textContent = 'Copied ✓'; }
+    catch(e) { inp.focus(); inp.select(); $('#sharecopy').textContent = 'Press Ctrl+C'; }
+    setTimeout(() => { $('#sharecopy').textContent = 'Copy link'; }, 2000);
+  };
+
+  async function openFromLink() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (!h.get('o') || !(h.get('z') || h.get('t'))) return;
+    try {
+      const text = h.get('z') ? await unsqueeze(h.get('z')) : h.get('t');
+      const aoa = [['gtin', 'quantity', 'name']].concat(text.split('\n').filter(Boolean).map(l => {
+        const [ean, qty, name] = l.split('\t'); return [ean, Number(qty) || 1, name || ''];
+      }));
+      setup(h.get('o') + '.xlsx', aoa);
+    } catch(e) { say('This order link is damaged. Ask for a new link or open the order file.', 'bad'); }
+  }
+  window.addEventListener('hashchange', openFromLink);
+  openFromLink();
 
   // ---------- export ----------
   $('#export').onclick = async () => {
