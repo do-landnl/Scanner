@@ -127,6 +127,7 @@
   .pbox{font:600 11px var(--sans);padding:1px 6px;border-radius:10px;background:var(--head);color:var(--mute)}
   .pbox.cur{background:var(--accent);color:var(--card)}
   .rowtools{margin-left:6px;opacity:.75}
+  .addto{display:block;margin-top:5px;padding:3px 10px;font-size:13px;font-weight:600;background:var(--accent);color:#fff;border:0;border-radius:6px;cursor:pointer;white-space:nowrap}
   .dim{width:4.2em}
   .catstate{font-weight:700;padding:2px 8px;border-radius:8px}
   .catstate.ok{color:var(--ok-ink);background:var(--ok)}
@@ -894,7 +895,7 @@
           const openU = curBox && !doneBoxes[curBox] ? (boxes[i] || {})[curBox] || 0 : 0;
           const rest = need(i) - doneU;
           return `<b class="${rest < 0 ? 'neg' : ''}">${rest}</b><small class="left">of ${need(i)} planned${openU ? ` · ${openU} in Box ${curBox} now` : ''}${rest - openU === 0 && rest >= 0 && openU ? ' · all in' : ''}${rest < 0 ? ' · too many!' : ''}</small>`;
-        })()}<span class="rowtools"><button class="mini" data-q="${i}" title="Change planned quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span></td>
+        })()}<span class="rowtools"><button class="mini" data-q="${i}" title="Change planned quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span>${curBox && !doneBoxes[curBox] ? `<button class="addto" data-a="${i}" title="Add this product to Box ${curBox} without scanning">+ Add to Box ${curBox}</button>` : ''}</td>
         <td class="pname">${esc(val(r, cName))}${phone}${plan}${packed ? `<span class="packed">${packed}</span>` : ''}</td>
         <td class="extra brand">${esc(brand)}</td>
         <td class="ean eancol">${esc(showEan(val(r, cEan)))}</td>
@@ -917,6 +918,8 @@
       else if (counts[i] > 0) setCount(i, counts[i] - 1); render(); });
     document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => amzEditQty(+b.dataset.q));
     document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => amzRemove(+b.dataset.x));
+    // manual add: same as scanning the product (quantity box pre-filled with what is left, editable)
+    document.querySelectorAll('[data-a]').forEach(b => b.onclick = () => amzScan([+b.dataset.a]));
     if (AMZ) renderBoxBar();
 
     const u = Object.entries(unknown);
