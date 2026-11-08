@@ -555,16 +555,35 @@
   // one product's text copied from Seller Central → {title, f: {SKU, ASIN, FNSKU, EAN, UPC}}
   function parseProductText(text) {
     const lines = String(text).split(/\n/).map(s => s.trim()).filter(s => s && !/^product image$/i.test(s));
-    const f = {}; let title = '';
+    const f = {}; const titleParts = []; let codesStarted = false;
     for (let k = 0; k < lines.length; k++) {
       const ln = lines[k];
       const solo = PKEYS.find(K => ln.toUpperCase() === K.toUpperCase());          // "ASIN" then value on next line
-      if (solo) { f[solo.toUpperCase()] = (lines[k + 1] || '').trim(); k++; continue; }
+      if (solo) { f[solo.toUpperCase()] = (lines[k + 1] || '').trim(); k++; codesStarted = true; continue; }
       ln.replace(/\b(SKU|ASIN|FNSKU|EAN|UPC|Status|Condition)\s*:\s*(\S+)/gi, (m, K, v) => { f[K.toUpperCase()] = v; return m; });
       const before = ln.split(/\b(?:SKU|ASIN|FNSKU|EAN|UPC)\s*:/i)[0].trim();   // title may share a line with "SKU: …"
-      if (!title && before && !isKeyLine(ln)) title = before;
+      // the name is every line before the first code line (Seller Central sometimes puts one word per line)
+      if (!codesStarted && before && !isKeyLine(ln)) titleParts.push(before);
+      if (isKeyLine(ln) || before !== ln.trim()) codesStarted = true;
     }
-    return {title, f};
+    const full = titleParts.join(' ').replace(/\s+/g, ' ').trim();
+    return {title: shortTitle(full), fullTitle: full, f};
+  }
+  // short product name: up to and including the size ("… Lotion 200ml"), else up to the first "(" "," or "|"
+  function shortTitle(t) {
+    let s = String(t || '').replace(/\s+/g, ' ').trim();
+    if (!s) return s;
+    const size = s.match(/^(.*?\b\d+(?:[.,]\d+)?\s?(?:ml|l|g|gr|kg|oz|fl\.?\s?oz|pcs|pieces|stück|stk|sheets|pads|capsules|caps)\b\.?)/i);
+    // first cut point ( "(" "|" ", " or " - Word") that leaves a name of at least 3 words ("PAW PATROL - Sprühstift-Set")
+    const words = p => p.split(/\s+/).filter(w => /[0-9A-Za-zÄÖÜäöüß]/.test(w)).length;
+    let cut = -1;
+    for (const m of s.matchAll(/\s?[(|]|,\s|\s[–—-]\s(?=[A-ZÄÖÜa-zäöü]{3,}\b(?!\s?\d))/g)) {   // "3,52 oz" is not a cut
+      if (words(s.slice(0, m.index)) >= 3) { cut = m.index; break; }
+    }
+    if (size && (cut < 0 || size[1].length <= cut)) s = size[1];
+    else if (cut > 0) s = s.slice(0, cut);
+    s = s.replace(/[\s,;:|–—-]+$/, '').trim();
+    return s.length > 90 ? s.slice(0, 90).replace(/\s\S*$/, '') + '…' : s;
   }
   // several products pasted at once: a new product starts at a title line after a block that already has codes
   function splitPasted(text) {
@@ -1139,12 +1158,12 @@
   // what was pasted/typed → products. Full Seller Central text, or just codes (FNSKU / SKU / ASIN / EAN, one or more)
   function readPasteBox(text) {
     const prods = splitPasted(text).map(p => ({...p, brand: brandOf(p.title)}));
-    prods.forEach(p => catRemember({sku: p.f.SKU, fnsku: p.f.FNSKU, asin: p.f.ASIN, ean: p.f.EAN || p.f.UPC, title: p.title, brand: p.brand}));
+    prods.forEach(p => catRemember({sku: p.f.SKU, fnsku: p.f.FNSKU, asin: p.f.ASIN, ean: p.f.EAN || p.f.UPC, title: p.fullTitle || p.title, brand: p.brand}));
     if (prods.length) return {prods, notFound: [], placeholders: 0};
     const out = [], notFound = []; let placeholders = 0;
     String(text).split(/[\s,;]+/).map(s => s.trim()).filter(Boolean).forEach(code => {
       const c = catFind(code);
-      if (c) out.push({title: c.title, brand: c.brand || brandOf(c.title), eans: c.eans || [],
+      if (c) out.push({title: shortTitle(c.title), brand: c.brand || brandOf(c.title), eans: c.eans || [],
                        f: {SKU: c.sku, FNSKU: c.fnsku, ASIN: c.asin, EAN: c.ean}});
       else if (/^X00[0-9A-Z]{7}$/i.test(code)) { out.push({title: '', brand: '', eans: [], f: {FNSKU: code.toUpperCase()}}); placeholders++; }
       else notFound.push(code);
