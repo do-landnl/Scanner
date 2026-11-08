@@ -88,18 +88,19 @@
   /* the scanned row scrolls into view just below the sticky header (height measured in script) */
   tbody tr{scroll-margin-top:calc(var(--hh, 0px) + 8px);scroll-margin-bottom:12px}
   header{grid-template-columns:minmax(0,1fr)} header>*{min-width:0}
+  #camBtn{background:var(--accent);color:var(--card);border-color:var(--accent);font-weight:700;padding:0 16px;white-space:nowrap;flex:none}
+  #camBtn.on{background:var(--bad-ink);border-color:var(--bad-ink);color:var(--card)}
   .eansub{display:none;font:500 12px var(--mono);color:var(--mute);margin-top:2px}
   @media (max-width:700px){ .eancol{display:none} .eansub{display:block} }
   @media (max-width:700px){
     .extra{display:none}
     header{gap:5px;padding-block:6px}
-    .top{flex-wrap:nowrap;gap:8px}
+    .top{gap:6px}
     h1{font-size:14px;white-space:nowrap}
     h1 small{display:none}
-    /* buttons on one line that swipes sideways instead of stacking 2-3 rows */
-    .tools{margin-left:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;min-width:0}
-    .tools::-webkit-scrollbar{display:none}
-    .tools button,.tools label.btn{padding:6px 10px;font-size:13px;white-space:nowrap;flex:none}
+    /* all buttons visible in a fixed 3-column grid under the title */
+    .tools{margin-left:0;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+    .tools button,.tools label.btn{padding:7px 4px;font-size:13px;white-space:nowrap;text-align:center;overflow:hidden;text-overflow:ellipsis}
     .scanrow{flex-wrap:nowrap;gap:6px}
     .scanbox{flex:1 1 auto}
     #scan{font-size:18px;padding:7px 10px;border-width:2px}
@@ -129,7 +130,6 @@
       <button id="undo" title="Undo last scan (F2)">Undo last</button>
       <button id="photoBtn" title="Take a photo of the barcode — works on every phone">Photo</button>
       <input id="photo" type="file" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;left:-9999px" tabindex="-1" aria-hidden="true">
-      <button id="camBtn" title="Live camera scanning">Camera</button>
       <button id="kbd" title="Show the on-screen keyboard to type a barcode by hand">Keyboard</button>
       <button id="export">Export Excel</button>
       <button id="reset">Reset scans</button>
@@ -138,6 +138,7 @@
   <div class="scanrow">
     <div class="scanbox"><input id="scan" placeholder="Scan barcode…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" enterkeyhint="done" autofocus></div>
     <div id="ready"><span class="dot"></span><span id="readytxt">Tap to scan</span></div>
+    <button id="camBtn" title="Live camera scanning">📷 Camera</button>
   </div>
   <div id="campanel" hidden>
     <div id="cam"></div>
@@ -320,7 +321,7 @@
       await video.play();
       await tuneTrack(stream.getVideoTracks()[0]);
       camOn = true;
-      $('#camBtn').classList.add('on'); $('#camBtn').textContent = 'Stop camera';
+      $('#camBtn').classList.add('on'); $('#camBtn').textContent = '■ Stop';
       camMsg('Camera on. Hold the barcode horizontal along the red line, 10–20 cm away.');
       let busy = false;
       const tick = async () => {
@@ -357,7 +358,7 @@
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; video = null; torchOn = false;
     $('#cam').innerHTML = ''; $('#campanel').hidden = true; $('#torch').hidden = true;
-    $('#camBtn').classList.remove('on'); $('#camBtn').textContent = 'Camera';
+    $('#camBtn').classList.remove('on'); $('#camBtn').textContent = '📷 Camera';
   }
   $('#camBtn').onclick = () => camOn ? stopCam() : startCam();
   $('#flipcam').onclick = async () => { facing = facing === 'environment' ? 'user' : 'environment'; await stopCam(); startCam(); };
@@ -477,7 +478,9 @@
   }
 
   function renderMap() {
-    const box = $('#mapbox'); box.hidden = false;
+    const box = $('#mapbox');
+    // columns are detected automatically; only show the picker when the barcode column could not be found
+    box.hidden = map.ean >= 0;
     const sel = (key, label) => `<label>${label} <select id="map-${key}" data-k="${key}"><option value="-1">—</option>${
       headers.map((h,i) => `<option value="${i}" ${map[key]===i?'selected':''}>${esc(h)}</option>`).join('')}</select></label>`;
     box.innerHTML = sel('ean','Barcode') + sel('qty','Quantity') + sel('name','Product')
