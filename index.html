@@ -657,23 +657,36 @@
     rows = aoa.slice(hr + 1).filter(r => r.some(c => c !== ''));
     fileName = name;
     autoMap();
-    const saved = load();
-    if (saved && saved.counts && saved.counts.length === rows.length) {
+    let saved = load();
+    // resume only the same list: an FBA file that was edited since (other products / quantities) must not pick up
+    // the old boxes. The old save stays untouched; the edited file is saved as "02.09 (2).xlsx" (and resumed from there next time).
+    const same = s => !AMZ || !s || !s.rows || JSON.stringify(s.rows) === JSON.stringify(rows);
+    let sameRows = same(saved);
+    if (!sameRows) {
+      const m = /^(.*?)(\.(xlsx|xls|csv))?$/i.exec(name); let k = 2, s2;
+      while ((s2 = JSON.parse(localStorage.getItem('qps:' + `${m[1]} (${k})${m[2] || ''}`) || 'null'))) {
+        if (same(s2)) { saved = s2; sameRows = true; break; }
+        k++;
+      }
+      fileName = `${m[1]} (${k})${m[2] || ''}`;
+      if (!sameRows) saved = null;
+    }
+    if (saved && saved.counts && saved.counts.length === rows.length && sameRows) {
       counts = saved.counts; history = saved.history || []; unknown = saved.unknown || {}; expAll = saved.expAll || EXP_DEFAULT;
       boxes = saved.boxes && saved.boxes.length === rows.length ? saved.boxes : rows.map(() => ({}));
       curBox = saved.curBox ?? 1; nBoxes = saved.nBoxes ?? 1; doneBoxes = saved.doneBoxes || {}; dims = {...DIM_DEFAULT, ...(saved.dims || {})}; boxDims = saved.boxDims || {};
-      say('Resumed your scans for ' + name, 'ok');
+      say('Resumed your scans for ' + fileName.replace(/\.(xlsx|xls|csv)$/i, ''), 'ok');
     } else {
       counts = rows.map(() => 0); history = []; unknown = {}; expAll = EXP_DEFAULT;
       // Amazon: a new shipment starts in setup (no box open); Qogita keeps one implicit "box"
       boxes = rows.map(() => ({})); curBox = AMZ ? 0 : 1; nBoxes = AMZ ? 0 : 1; doneBoxes = {}; dims = {...DIM_DEFAULT}; boxDims = {};
-      say(rows.length + (AMZ ? ' products loaded — check the plan, then click "New box" to start packing' : ' lines loaded — start scanning'), 'ok');
+      say(rows.length + (AMZ ? ` products loaded${fileName !== name ? ` as "${fileName.replace(/\.(xlsx|xls|csv)$/i, '')}" (the file changed since you last opened it; the old one is kept)` : ''} — check the plan, then click "Start packing"` : ' lines loaded — start scanning'), 'ok');
     }
     lastIdx = -1;
     if (AMZ) { store(); catFromRows(); amzRefresh(); }
     $('#expAll').value = expAll;
     const val = orderValue();
-    $('#fname').textContent = '· ' + name.replace(/\.(xlsx|xls|csv)$/i, '') + (val ? ' · ' + money(val) : '');
+    $('#fname').textContent = '· ' + fileName.replace(/\.(xlsx|xls|csv)$/i, '') + (val ? ' · ' + money(val) : '');
     drop.hidden = true; $('#filters').hidden = false;
     renderMap(); render();
   }
@@ -879,8 +892,8 @@
     const col = k => headers.findIndex(h => h.toUpperCase() === k);
     const cName = map.name, cEan = map.ean, cAsin = col('ASIN'), cSku = col('SKU'), cFn = map.fnsku;
     const val = (r, c) => c >= 0 && r[c] !== null && r[c] !== undefined ? String(r[c]) : '';
-    let html = `<table class="amz"><thead><tr><th>${nBoxes ? 'Still to pack' : 'Planned'}</th><th>Product</th><th class="extra">Brand</th><th class="eancol">EAN</th>'
-      + '<th class="extra">ASIN</th><th class="extra">SKU</th><th class="extra">FNSKU</th></tr></thead><tbody>`;
+    let html = `<table class="amz"><thead><tr><th>${nBoxes ? 'Still to pack' : 'Planned'}</th><th>Product</th><th class="extra">Brand</th><th class="eancol">EAN</th>
+      <th class="extra">ASIN</th><th class="extra">SKU</th><th class="extra">FNSKU</th></tr></thead><tbody>`;
     rows.forEach((r, i) => {
       const st = status(i);
       if (filter === 'todo' && st !== 'todo') return;
