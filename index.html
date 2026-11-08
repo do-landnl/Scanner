@@ -175,6 +175,19 @@
   .bar>div{background:linear-gradient(90deg,var(--accent),var(--ok-ink))}
   /* box tabs: each box in its own colour; the one you pack is filled */
   #boxbar{gap:8px}
+  /* Qogita: several orders open at once, one tab each */
+  #orderbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  #orderbar .olbl{font-weight:700;color:var(--mute)}
+  #orderbar .otab{display:inline-flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border:2px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);font-weight:700;cursor:pointer}
+  #orderbar .otab small{font:600 12px var(--mono);color:var(--mute)}
+  #orderbar .otab.on{border-color:var(--accent);background:var(--accent);color:var(--card)}
+  #orderbar .otab.on small{color:var(--card);opacity:.85}
+  #orderbar .otab.done:not(.on){border-color:var(--ok-ink);background:var(--ok);color:var(--ok-ink)}
+  #orderbar .otab.hint{animation:ohint .5s ease-in-out 4 alternate;border-color:var(--part-ink)}
+  @keyframes ohint{to{background:var(--part);color:var(--part-ink)}}
+  #orderbar .oclose{border:0;background:transparent;color:inherit;padding:0 6px;font-size:15px;line-height:1;opacity:.7;cursor:pointer}
+  #orderbar .oclose:hover{opacity:1}
+  #orderbar #addorder{border:2px dashed var(--accent);color:var(--accent);background:transparent;font-weight:700}
   #boxbar>b{font-size:15px}
   #boxbar .bx{border:2px solid var(--bx);color:var(--bx);background:color-mix(in srgb,var(--bx) 8%,var(--card));font-weight:700;padding:7px 14px;border-radius:10px}
   #boxbar .bx small{display:block;font-size:11px;font-weight:600;opacity:.85;margin:0}
@@ -282,6 +295,7 @@
     <div id="ready"><span class="dot"></span><span id="readytxt">Tap to scan</span></div>
     <button id="camBtn" title="Live camera scanning">📷 Camera</button>
   </div>
+  <div id="orderbar" hidden></div>
   <div id="boxbar" hidden></div>
   <div id="qtyask" hidden>
     <span id="qtyprod"></span>
@@ -401,8 +415,63 @@
     if (!fileName) return;
     const s = {counts, history, unknown, expAll};
     if (AMZ) Object.assign(s, {kind: 'fba', boxes, curBox, nBoxes, doneBoxes, dims, boxDims, headers, rows, savedAt: Date.now()});
-    try { localStorage.setItem('qps:' + fileName, JSON.stringify(s)); if (AMZ) localStorage.setItem('qps-last-fba', fileName); } catch(e){}
+    // Qogita: the whole order is kept too, so several orders can be open and switched with tabs
+    else Object.assign(s, {kind: 'q', headers, rows, map: {...map}, linkValue, savedAt: Date.now(),
+      prog: [rows.reduce((t, _, i) => t + Math.min(counts[i] || 0, need(i)), 0), rows.reduce((t, _, i) => t + need(i), 0)]});
+    try { localStorage.setItem('qps:' + fileName, JSON.stringify(s)); if (AMZ) localStorage.setItem('qps-last-fba', fileName); else localStorage.setItem('qps-last-q', fileName); } catch(e){}
+    if (!AMZ) renderOrderBar();
   };
+  // ---------- Qogita: open orders (tabs) ----------
+  const OPEN_KEY = 'qps-open-orders';
+  const openOrders = () => { try { return JSON.parse(localStorage.getItem(OPEN_KEY) || '[]'); } catch(e) { return []; } };
+  const setOpen = a => { try { localStorage.setItem(OPEN_KEY, JSON.stringify(a)); } catch(e) {} };
+  const savedOf = n => { try { return JSON.parse(localStorage.getItem('qps:' + n) || 'null'); } catch(e) { return null; } };
+  const orderLabel = n => n.replace(/\.(xlsx|xls|csv)$/i, '');
+  function renderOrderBar(hintName) {
+    const bar = $('#orderbar'); if (!bar || AMZ) return;
+    const list = openOrders();
+    bar.hidden = !list.length;
+    if (!list.length) { bar.innerHTML = ''; return; }
+    bar.innerHTML = `<span class="olbl">Orders:</span>` + list.map(n => {
+      const s = savedOf(n) || {}, [d, t] = s.prog || [0, 0];
+      const cls = ['otab', n === fileName ? 'on' : '', t && d >= t ? 'done' : '', n === hintName ? 'hint' : ''].filter(Boolean).join(' ');
+      return `<span class="${cls}" data-o="${esc(n)}" role="button" tabindex="-1" title="Switch to order ${esc(orderLabel(n))}">${esc(orderLabel(n))} <small>${t && d >= t ? '✓ ' : ''}${d}/${t}</small>`
+        + `<button class="oclose" data-oc="${esc(n)}" title="Close this order tab (the scans stay saved)">✕</button></span>`;
+    }).join('') + `<button id="addorder" class="mini" title="Open another Qogita order next to these">+ Add order</button>`;
+    bar.querySelectorAll('[data-o]').forEach(t => t.onclick = e => { if (!e.target.closest('[data-oc]')) switchOrder(t.dataset.o); });
+    bar.querySelectorAll('[data-oc]').forEach(b => b.onclick = e => { e.stopPropagation(); closeOrder(b.dataset.oc); });
+    $('#addorder').onclick = () => $('#file').click();
+  }
+  function switchOrder(n) {
+    if (n === fileName) { lock(); return; }
+    const s = savedOf(n);
+    if (!s || !s.rows) { setOpen(openOrders().filter(x => x !== n)); renderOrderBar(); say('That order is no longer saved in this browser — open its file again', 'bad'); return; }
+    store();
+    linkValue = s.linkValue ?? null;
+    setup(n, [s.headers, ...s.rows]);
+    $('#search').value = ''; render(); lock();
+  }
+  function closeOrder(n) {
+    const list = openOrders(), k = list.indexOf(n), rest = list.filter(x => x !== n);
+    setOpen(rest);
+    if (n !== fileName) { renderOrderBar(); lock(); return; }
+    if (rest.length) { fileName = ''; switchOrder(rest[Math.min(k, rest.length - 1)]); return; }
+    fileName = ''; rows = []; headers = []; counts = []; history = []; unknown = {};
+    try { localStorage.removeItem('qps-last-q'); } catch(e) {}
+    $('#tablewrap').innerHTML = ''; $('#stats').innerHTML = ''; $('#bar').style.width = '0%'; $('#fname').textContent = '';
+    $('#filters').hidden = true; $('#mapbox').hidden = true; drop.hidden = false; $('#msg').textContent = ''; $('#msg').className = '';
+    renderOrderBar(); lock();
+  }
+  // a wrong scan that belongs to another open order: say which one
+  function otherOrderWith(code) {
+    for (const n of openOrders()) {
+      if (n === fileName) continue;
+      const s = savedOf(n); if (!s || !s.rows) continue;
+      const c = s.map && s.map.ean >= 0 ? s.map.ean : (s.headers || []).findIndex(h => /gtin|ean|barcode|upc/i.test(h));
+      if (c >= 0 && s.rows.some(r => normEan(r[c]) === code)) return n;
+    }
+    return null;
+  }
   const load  = () => { try { return JSON.parse(localStorage.getItem('qps:' + fileName) || 'null'); } catch(e){ return null; } };
 
   let actx;
@@ -816,6 +885,10 @@
       fileName = `${m[1]} (${k})${m[2] || ''}`;
       if (!sameRows) saved = null;
     }
+    if (!AMZ) {   // Qogita: this order gets a tab (kept up to 12 open orders)
+      const list = openOrders(); if (!list.includes(fileName)) { list.push(fileName); setOpen(list.slice(-12)); }
+      if (saved && saved.map && saved.counts && saved.counts.length === rows.length) Object.assign(map, saved.map);
+    }
     if (saved && saved.counts && saved.counts.length === rows.length && sameRows) {
       counts = saved.counts; history = saved.history || []; unknown = saved.unknown || {}; expAll = saved.expAll || EXP_DEFAULT;
       boxes = saved.boxes && saved.boxes.length === rows.length ? saved.boxes : rows.map(() => ({}));
@@ -828,7 +901,7 @@
       say(rows.length + (AMZ ? ` products loaded${fileName !== name ? ` as "${fileName.replace(/\.(xlsx|xls|csv)$/i, '')}" (the file changed since you last opened it; the old one is kept)` : ''} — check the plan, then click "Start packing"` : ' lines loaded — start scanning'), 'ok');
     }
     lastIdx = -1;
-    if (AMZ) { store(); catFromRows(); amzRefresh(); }
+    if (AMZ) { store(); catFromRows(); amzRefresh(); } else store();
     $('#expAll').value = expAll;
     const val = orderValue();
     $('#fname').textContent = '· ' + fileName.replace(/\.(xlsx|xls|csv)$/i, '') + (val ? ' · ' + money(val) : '');
@@ -910,6 +983,11 @@
       say(`"${raw.trim()}" is not a barcode — showing products that match it`, 'part'); return;
     }
     if (!hits.length) {
+      const other = !AMZ && digits ? otherOrderWith(code) : null;
+      if (other) {   // belongs to another open order: don't count it as wrong, point to that order's tab
+        say(`✗ NOT IN THIS ORDER — ${raw.trim()} is in order ${orderLabel(other)}. Click its tab to pack it there.`, 'bad'); beep(false);
+        renderOrderBar(other); return;
+      }
       unknown[code] = (unknown[code] || 0) + 1; store();
       say('✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
     }
@@ -1180,6 +1258,15 @@
   }
   window.addEventListener('hashchange', openFromLink);
   openFromLink();
+  // Qogita: opening the page brings back the open order tabs and the order you were on
+  if (!AMZ && !/[#&]o=/.test(location.hash)) {
+    let last = null; try { last = localStorage.getItem('qps-last-q'); } catch(e) {}
+    const list = openOrders();
+    const pick = list.includes(last) ? last : list[list.length - 1];
+    const s = pick ? savedOf(pick) : null;
+    if (s && s.rows && s.rows.length) { linkValue = s.linkValue ?? null; setup(pick, [s.headers, ...s.rows]); }
+    else renderOrderBar();
+  }
 
   // ---------- Amazon product memory (this browser only) ----------
   // Every product pasted, loaded from an FBA sheet or from the product list (scripts/export_fba_product_list.py)
@@ -1345,10 +1432,10 @@
     if (!boxUnits(curBox)) { say(`Box ${curBox} is empty — scan products into it first`, 'bad'); beep(false); return; }
     doneBoxes[curBox] = true;
     const b = curBox, u = boxUnits(b);
-    store(); render();   // the completed box stays on screen with its "Amazon manifest – Box N" button
+    store(); render();   // the completed box stays on screen with its "Download Amazon manifest for Box N" button
     const left = rows.reduce((s, _, i) => s + Math.max(0, need(i) - counts[i]), 0);
     const open = [...Array(nBoxes)].map((_, k) => k + 1).filter(x => !doneBoxes[x]);
-    say(`✓ Box ${b} completed: ${u} units. Click "Amazon manifest – Box ${b}" to make its upload file.`
+    say(`✓ Box ${b} completed: ${u} units. Click "Download Amazon manifest for Box ${b}" to make its upload file.`
       + (open.length ? ` Still open: ${open.map(x => 'Box ' + x).join(', ')} — click one to keep packing.`
          : left ? ` ${left} units left in the plan — "+ New box" for the next box.` : ' Everything is packed.'), 'ok'); beep(true);
     lock();
@@ -1371,7 +1458,7 @@
     const locked = !!doneBoxes[curBox];
     const items = rows.map((r, i) => [i, (boxes[i] || {})[curBox] || 0]).filter(([, n]) => n > 0);
     let h = `<div class="bvhead"><b>${locked ? '✓ ' : ''}Box ${curBox}</b><span class="note">${items.length} product${items.length === 1 ? '' : 's'} · ${boxUnits(curBox)} units${locked ? ' · completed' : ''}</span>
-      ${locked ? `<button id="boxmanifest" class="primary">Amazon manifest – Box ${curBox}</button><button id="reopenbox">Reopen box</button>`
+      ${locked ? `<button id="boxmanifest" class="primary">⬇ Download Amazon manifest for Box ${curBox}</button><button id="reopenbox">Reopen box</button>`
                : `<button id="completebox" class="primary">✓ Complete Box ${curBox}</button>`}</div>`;
     if (!items.length) h += `<p class="note">Box ${curBox} is empty — scan the first product that goes into this box.</p>`;
     else h += '<table class="bvt"><tbody>' + items.map(([i, n]) =>
