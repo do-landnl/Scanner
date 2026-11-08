@@ -1166,9 +1166,10 @@
     if (!boxUnits(curBox)) { say(`Box ${curBox} is empty — scan products into it first`, 'bad'); beep(false); return; }
     doneBoxes[curBox] = true;
     const b = curBox, u = boxUnits(b);
-    curBox = 0; store(); render();
+    store(); render();   // the completed box stays on screen with its "Amazon manifest – Box N" button
     const left = rows.reduce((s, _, i) => s + Math.max(0, need(i) - counts[i]), 0);
-    say(`✓ Box ${b} completed: ${u} units. ${left ? left + ' units left in the plan — click "+ New box" for the next box.' : 'Everything is packed — make the Amazon manifest.'}`, 'ok'); beep(true);
+    say(`✓ Box ${b} completed: ${u} units. Click "Amazon manifest – Box ${b}" to make its upload file.`
+      + (left ? ` ${left} units left in the plan — then "+ New box" for the next box.` : ' Everything is packed.'), 'ok'); beep(true);
     lock();
   }
   function reopenBox() {
@@ -1189,7 +1190,8 @@
     const locked = !!doneBoxes[curBox];
     const items = rows.map((r, i) => [i, (boxes[i] || {})[curBox] || 0]).filter(([, n]) => n > 0);
     let h = `<div class="bvhead"><b>${locked ? '✓ ' : ''}Box ${curBox}</b><span class="note">${items.length} product${items.length === 1 ? '' : 's'} · ${boxUnits(curBox)} units${locked ? ' · completed' : ''}</span>
-      ${locked ? '<button id="reopenbox">Reopen box</button>' : `<button id="completebox" class="primary">✓ Complete Box ${curBox}</button>`}</div>`;
+      ${locked ? `<button id="boxmanifest" class="primary">Amazon manifest – Box ${curBox}</button><button id="reopenbox">Reopen box</button>`
+               : `<button id="completebox" class="primary">✓ Complete Box ${curBox}</button>`}</div>`;
     if (!items.length) h += `<p class="note">Box ${curBox} is empty — scan the first product that goes into this box.</p>`;
     else h += '<table class="bvt"><tbody>' + items.map(([i, n]) =>
       `<tr${i === lastIdx ? ' class="last"' : ''}><td class="cnt">${locked ? `<b>${n}</b>` : `<button class="mini" data-bm="${i}" aria-label="one less in this box">−</button><input class="bvqty" id="bvq${i}" type="text" inputmode="numeric" value="${n}" data-bq="${i}" aria-label="units of this product in Box ${curBox}"><button class="mini" data-bp="${i}" aria-label="one more in this box">+</button>`}</td>
@@ -1199,6 +1201,7 @@
     v.classList.toggle('locked', locked);
     if ($('#completebox')) $('#completebox').onclick = completeBox;
     if ($('#reopenbox')) $('#reopenbox').onclick = reopenBox;
+    if ($('#boxmanifest')) $('#boxmanifest').onclick = () => exportManifest(curBox);
     v.querySelectorAll('[data-bp]').forEach(b => b.onclick = () => { const i = +b.dataset.bp; setBox(i, curBox, (boxes[i][curBox] || 0) + 1); render(); });
     v.querySelectorAll('[data-bm]').forEach(b => b.onclick = () => { const i = +b.dataset.bm; setBox(i, curBox, (boxes[i][curBox] || 0) - 1); render(); });
     v.querySelectorAll('[data-bx]').forEach(b => b.onclick = () => { const i = +b.dataset.bx; setBox(i, curBox, 0); render(); say(`${label(i)} taken out of Box ${curBox}`, 'part'); });
@@ -1439,8 +1442,11 @@
     } else XLSX.writeFile(wb, fn);
   }
   $('#expAll').onchange = () => { expAll = $('#expAll').value; store(); $('#expAll').blur(); lock(); };
-  $('#manifest').onclick = async () => {
+  $('#manifest').onclick = () => exportManifest(0);
+  // onlyBox = 0 → whole shipment; onlyBox = N → only Box N (one Amazon shipment per box)
+  async function exportManifest(onlyBox) {
     if (!rows.length || map.sku < 0) return;
+    if (onlyBox && !boxUnits(onlyBox)) { say(`Box ${onlyBox} is empty — nothing to put in the manifest`, 'bad'); beep(false); return; }
     const usDate = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
     const exp = usDate(expAll) || null;   // no date → cell left empty
     const missing = rows.filter((r, i) => counts[i] < need(i)).length;
@@ -1458,7 +1464,7 @@
       rows.forEach((r, i) => {
         const sku = String(r[map.sku] || '').trim();
         if (!sku) return;
-        Object.keys(boxes[i] || {}).map(Number).sort((a, b) => a - b).forEach(b => {
+        Object.keys(boxes[i] || {}).map(Number).filter(b => !onlyBox || b === onlyBox).sort((a, b) => a - b).forEach(b => {
           const n = boxes[i][b]; if (!n) return;
           lines.push([sku, n, exp, null, n, 1, dims.l, dims.w, dims.h, dims.kg]);
           skus.add(sku); perSku[sku] = (perSku[sku] || 0) + 1;
@@ -1478,13 +1484,17 @@
     if (!lines.length) { say('Nothing packed yet — scan the products first, then make the manifest.', 'bad'); beep(false); return; }
     XLSX.utils.sheet_add_aoa(ws, lines, {origin: 'A9'});
     wb.Workbook = wb.Workbook || {}; wb.Workbook.Views = [{activeTab: wb.SheetNames.indexOf(sheet)}];
-    await saveFile(wb, `ManifestFileUpload_${orderId()}.xlsx`);
+    // products in the box without a Merchant SKU (added by FNSKU only) cannot go in the file
+    const noSku = rows.map((r, i) => i).filter(i => !String(rows[i][map.sku] || '').trim()
+      && Object.entries(boxes[i] || {}).some(([b, n]) => n > 0 && (!onlyBox || +b === onlyBox)));
+    await saveFile(wb, `ManifestFileUpload_${orderId()}${onlyBox ? '_Box' + onlyBox : ''}.xlsx`);
     const units = lines.reduce((s, v) => s + v[1], 0);
-    say(`Amazon manifest: ${skus.size} SKUs, ${lines.length} packing lines, ${units} units`
-      + (missing ? ` — ${missing} product(s) not fully packed, only packed units are in the file` : '')
-      + (tooMany.length ? ` — ⚠ in more than 4 boxes (Amazon max): ${tooMany.join(', ')}` : ''), missing || tooMany.length ? 'part' : 'ok');
+    say(`Amazon manifest${onlyBox ? ' Box ' + onlyBox : ''}: ${skus.size} SKUs, ${lines.length} packing line${lines.length === 1 ? '' : 's'}, ${units} units`
+      + (!onlyBox && missing ? ` — ${missing} product(s) not fully packed, only packed units are in the file` : '')
+      + (noSku.length ? ` — ⚠ left out, no SKU yet (paste their details): ${noSku.map(label).join(', ')}` : '')
+      + (tooMany.length ? ` — ⚠ in more than 4 boxes (Amazon max): ${tooMany.join(', ')}` : ''), (!onlyBox && missing) || tooMany.length || noSku.length ? 'part' : 'ok');
     lock();
-  };
+  }
 
   // ---------- export ----------
   $('#export').onclick = async () => {
