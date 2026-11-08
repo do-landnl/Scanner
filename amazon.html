@@ -1,0 +1,1127 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FBA Pack Scanner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/barcode-detector@2.3.1/dist/iife/pure.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<style>
+  /* Layout: sticky scan console on top (the only thing the packer looks at), order lines below as a pick list. */
+  :root{
+    --bg:#f2f4f3; --card:#ffffff; --fg:#17201c; --mute:#5d6b65; --line:#d6ddd9; --head:#e7ecea;
+    --accent:#0f6b5c; --accent-soft:#dff1ec;
+    --ok:#cdeed3; --ok-ink:#17702f; --part:#fdf0bd; --part-ink:#8a6400; --bad:#ffd9d6; --bad-ink:#b3261e;
+    --sans:"IBM Plex Sans", "Segoe UI", system-ui, Arial, sans-serif;
+    --mono:"IBM Plex Mono", Consolas, "Courier New", monospace;
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#121715; --card:#1a211e; --fg:#e6ece9; --mute:#93a39c; --line:#2d3833; --head:#222b27;
+    --accent:#4fc2a8; --accent-soft:#183a32;
+    --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92; color-scheme:dark }}
+  :root[data-theme="dark"]{
+    --bg:#121715; --card:#1a211e; --fg:#e6ece9; --mute:#93a39c; --line:#2d3833; --head:#222b27;
+    --accent:#4fc2a8; --accent-soft:#183a32;
+    --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92; color-scheme:dark }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--fg);font:15px/1.4 var(--sans)}
+  body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--card)}
+  .pad{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding-block:12px;display:grid;gap:8px}
+  .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.01em}
+  h1 small{font-weight:500;color:var(--mute);font-size:13px;margin-left:6px}
+  .tools{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+  button,label.btn{font:500 14px var(--sans);padding:8px 12px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;cursor:pointer;touch-action:manipulation}
+  button:hover,label.btn:hover{border-color:var(--accent)}
+  button:focus-visible,label.btn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+  button.on{background:var(--accent-soft);border-color:var(--accent)}
+  .scanrow{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
+  .scanbox{flex:1 1 320px;min-width:0;position:relative}
+  #scan{width:100%;font:600 26px var(--mono);letter-spacing:.04em;padding:12px 14px;border:3px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);outline:none}
+  #scan:focus{border-color:var(--accent)}
+  #scan.flash-ok{border-color:var(--ok-ink);background:var(--ok)}
+  #scan.flash-bad{border-color:var(--bad-ink);background:var(--bad)}
+  #ready{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;padding:0 12px;border-radius:10px;border:1px solid var(--line);white-space:nowrap}
+  #ready .dot{width:12px;height:12px;border-radius:50%;background:var(--bad-ink)}
+  #ready.live{color:var(--ok-ink)} #ready.live .dot{background:var(--ok-ink);box-shadow:0 0 0 4px var(--ok)}
+  #ready:not(.live){color:var(--bad-ink);cursor:pointer}
+  #msg{font-size:20px;font-weight:700;min-height:28px;overflow-wrap:anywhere}
+  #msg.ok{color:var(--ok-ink)} #msg.bad{color:var(--bad-ink)} #msg.part{color:var(--part-ink)}
+  .stats{display:flex;gap:16px;color:var(--mute);flex-wrap:wrap;font-variant-numeric:tabular-nums}
+  .stats b{color:var(--fg)}
+  .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+  .bar>div{height:100%;background:var(--ok-ink);width:0%;transition:width .2s}
+  main{padding-block:12px 40px;display:grid;gap:10px}
+  #drop{border:2px dashed var(--line);border-radius:12px;padding:32px 16px;text-align:center;color:var(--mute);background:var(--card)}
+  #drop.over{border-color:var(--accent);color:var(--accent)}
+  #drop p{margin:6px 0}
+  .colmap{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;gap:8px 14px;flex-wrap:wrap;align-items:center;font-size:14px}
+  .colmap select{font:inherit;padding:4px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px}
+  .filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .filters input{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);flex:1 1 180px;min-width:0}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+  th{background:var(--head);font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);white-space:nowrap}
+  td.ean{font-family:var(--mono);white-space:nowrap}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  td.cnt{white-space:nowrap;font-variant-numeric:tabular-nums}
+  td.cnt b{font-size:17px;display:inline-block;min-width:58px;text-align:center}
+  .mini{padding:3px 10px;font-size:15px}
+  tr.done td{background:var(--ok)} tr.done td.cnt b{color:var(--ok-ink)}
+  tr.part td{background:var(--part)} tr.part td.cnt b{color:var(--part-ink)}
+  tr.over td{background:var(--bad)} tr.over td.cnt b{color:var(--bad-ink)}
+  tr.last td{box-shadow:inset 0 3px 0 var(--accent),inset 0 -3px 0 var(--accent)}
+  #unknown{color:var(--bad-ink);font-weight:500}
+  #campanel{display:grid;gap:6px}
+  #cam{width:100%;max-width:520px;border-radius:10px;overflow:hidden;background:#000;position:relative}
+  #cam video{width:100%!important;display:block}
+  #camguide{position:absolute;left:8%;right:8%;top:50%;height:34%;transform:translateY(-50%);border:3px solid rgba(255,255,255,.85);border-radius:8px;pointer-events:none;box-shadow:0 0 0 2000px rgba(0,0,0,.25)}
+  #camguide::after{content:"";position:absolute;left:4%;right:4%;top:50%;border-top:2px solid #ff4d4d}
+  .camtools{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  #confirmReset{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--bad-ink);font-weight:600}
+  .note{color:var(--mute);font-size:13px}
+  /* the scanned row scrolls into view just below the sticky header (height measured in script) */
+  tbody tr{scroll-margin-top:calc(var(--hh, 0px) + 8px);scroll-margin-bottom:12px}
+  header{grid-template-columns:minmax(0,1fr)} header>*{min-width:0}
+  #sharebox{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:grid;place-items:center;padding:16px}
+  .sharecard{background:var(--card);color:var(--fg);border-radius:12px;padding:16px;width:min(420px,100%);display:grid;gap:10px;justify-items:center;text-align:center;max-height:100%;overflow:auto}
+  #shareqr img{width:min(300px,70vw);height:auto;image-rendering:pixelated;background:#fff;padding:6px;border-radius:6px}
+  #sharelink{width:100%;font:13px var(--mono);padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+  .sharebtns{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+  a.btn{font:500 14px var(--sans);padding:8px 12px;border:1px solid #1f9d55;background:#25d366;color:#08311a;border-radius:8px;text-decoration:none}
+  #camBtn{background:var(--accent);color:var(--card);border-color:var(--accent);font-weight:700;padding:0 16px;white-space:nowrap;flex:none}
+  #camBtn.on{background:var(--bad-ink);border-color:var(--bad-ink);color:var(--card)}
+  #addbox{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;display:grid;gap:8px}
+  .addrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .addrow input,#paste,#savedship{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
+  #shipname{width:14em;max-width:100%} #addqty{width:6em}
+  #paste{width:100%;resize:vertical;font:13px var(--mono);min-width:0}
+  button.primary{background:var(--accent);color:var(--card);border-color:var(--accent);font-weight:700}
+  #boxbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  #boxbar .bx{font-weight:600}
+  #boxbar .bx.on{background:var(--accent);color:var(--card);border-color:var(--accent)}
+  #boxbar .bx small{font-weight:500;opacity:.8;margin-left:4px}
+  .packed{display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
+  .pbox{font:600 11px var(--sans);padding:1px 6px;border-radius:10px;background:var(--head);color:var(--mute)}
+  .pbox.cur{background:var(--accent);color:var(--card)}
+  .rowtools{margin-left:6px;opacity:.75}
+  .dim{width:4.2em}
+  .exp{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--mute);margin-top:4px}
+  .expin{font:12px var(--sans);padding:2px 4px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+  .subinfo{display:block;font:500 12px var(--mono);color:var(--accent);margin-top:2px}
+  .eansub{display:none;font:500 12px var(--mono);color:var(--mute);margin-top:2px}
+  @media (max-width:700px){ .eancol{display:none} .eansub{display:block} }
+  @media (max-width:700px){
+    .extra{display:none}
+    header{gap:5px;padding-block:6px}
+    .top{gap:6px}
+    h1{font-size:14px}
+    h1 small{font-size:13px;font-weight:700;color:var(--accent);margin-left:2px}
+    /* all buttons visible in a fixed 3-column grid under the title */
+    .tools{margin-left:0;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+    .tools button,.tools label.btn{padding:7px 4px;font-size:13px;white-space:nowrap;text-align:center;overflow:hidden;text-overflow:ellipsis}
+    .scanrow{flex-wrap:nowrap;gap:6px}
+    .scanbox{flex:1 1 auto}
+    #scan{font-size:18px;padding:7px 10px;border-width:2px}
+    #ready{padding:0 8px;font-size:12px}
+    #ready #readytxt{display:none}
+    #msg{font-size:15px;min-height:20px}
+    .stats{font-size:13px;gap:10px}
+    .bar{height:5px}
+    /* camera: a short strip instead of a full-height picture */
+    #cam{max-width:none}
+    #cam video{height:26vh!important;object-fit:cover}
+    #camguide{height:55%}
+    #camnote{display:none}
+    .camtools{gap:6px}
+    td{padding:6px 7px}
+    td.cnt b{font-size:15px;min-width:48px}
+    .mini{padding:4px 10px}
+  }
+  @media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
+</style>
+
+<header class="pad">
+  <div class="top">
+    <h1>FBA Pack Scanner<small id="fname"></small></h1>
+    <div class="tools">
+      <label class="btn">Open order file<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
+      <button id="undo" title="Undo last scan (F2)">Undo last</button>
+      <button id="photoBtn" title="Take a photo of the barcode — works on every phone">Photo</button>
+      <input id="photo" type="file" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;left:-9999px" tabindex="-1" aria-hidden="true">
+      <button id="kbd" title="Show the on-screen keyboard to type a barcode by hand">Keyboard</button>
+      <button id="export">Export Excel</button>
+      <button id="manifest" hidden title="Amazon Send to Amazon upload file with the scanned quantities per SKU">Amazon manifest</button>
+      <button id="boxexport" hidden title="Excel with how many of each SKU are in Box 1, Box 2, …">Box contents</button>
+      <button id="share" title="Make a link / QR code that opens this order on a phone">Share link</button>
+      <button id="reset">Reset scans</button>
+    </div>
+  </div>
+  <div class="scanrow">
+    <div class="scanbox"><input id="scan" placeholder="Scan barcode…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" enterkeyhint="done" autofocus></div>
+    <div id="ready"><span class="dot"></span><span id="readytxt">Tap to scan</span></div>
+    <button id="camBtn" title="Live camera scanning">📷 Camera</button>
+  </div>
+  <div id="boxbar" hidden></div>
+  <div id="campanel" hidden>
+    <div id="cam"></div>
+    <div class="camtools">
+      <button id="torch" class="mini" hidden>Light</button>
+      <button id="flipcam" class="mini">Switch camera</button>
+      <span class="note" id="camnote">Hold the barcode flat and horizontal along the red line, 10–20 cm away. One beep = one unit. Move the product away before the next unit of the same item.</span>
+    </div>
+  </div>
+  <div id="sharebox" hidden>
+    <div class="sharecard" role="dialog" aria-label="Share this order">
+      <b id="sharetitle">Open this order on a phone</b>
+      <div id="shareqr"></div>
+      <p class="note" id="sharehint">Scan the QR code with the iPhone camera, or send the link on WhatsApp. The link contains only barcodes, quantities and product names — no customer details.</p>
+      <input id="sharelink" readonly>
+      <div class="sharebtns">
+        <button id="sharecopy">Copy link</button>
+        <a id="sharewa" class="btn" target="_blank" rel="noopener">Send on WhatsApp</a>
+        <button id="shareclose">Close</button>
+      </div>
+    </div>
+  </div>
+  <div id="confirmReset" hidden>Clear all scans for this order? <button id="yesReset">Yes, clear</button><button id="noReset">Cancel</button></div>
+  <div id="msg"></div>
+  <div class="stats" id="stats"></div>
+  <div class="bar"><div id="bar"></div></div>
+</header>
+
+<main class="pad">
+  <div id="drop">
+    <p><b>Paste product details from Seller Central below</b>, or open / drop your FBA shipment Excel.</p><p>Scan the EAN on the product or the Amazon FNSKU sticker (X00&hellip;) &mdash; both work.</p>
+    <p>Then just scan. The scan box keeps the cursor all the time — no Ctrl+F, no clicking.</p>
+    <p class="note">Green = line complete · Yellow = partly scanned · Red = too many or not in this order</p>
+  </div>
+  <div id="mapbox" class="colmap" hidden></div>
+  <section id="addbox" hidden>
+    <div class="addrow">
+      <label>Shipment <input id="shipname" autocomplete="off"></label>
+      <button id="newship">New shipment</button>
+      <select id="savedship" aria-label="Open a saved shipment"><option value="">Open saved shipment…</option></select>
+    </div>
+    <textarea id="paste" rows="4" placeholder="Paste product details from Seller Central here (title, SKU, ASIN, FNSKU, EAN) — one or more products. Tip: Ctrl+V anywhere on the page also lands here."></textarea>
+    <div class="addrow">
+      <label>Labels printed <input id="addqty" type="number" min="1" step="1" value="1"></label>
+      <button id="addbtn" class="primary">Add to shipment</button>
+      <span class="note" id="addnote"></span>
+    </div>
+  </section>
+  <div class="filters" id="filters" hidden>
+    <button class="mini on" data-f="all">All</button>
+    <button class="mini" data-f="todo">To do</button>
+    <button class="mini" data-f="part">Partial</button>
+    <button class="mini" data-f="done">Done</button>
+    <input id="search" placeholder="Filter by name or barcode…" autocomplete="off">
+    <label id="expAllBox" class="exp" hidden>Expiry (all products) <input type="date" id="expAll" class="expin"></label>
+    <span id="dimBox" class="exp" hidden>Box cm
+      <input type="number" id="dimL" class="expin dim" min="1" step="0.1" aria-label="Box length cm">×
+      <input type="number" id="dimW" class="expin dim" min="1" step="0.1" aria-label="Box width cm">×
+      <input type="number" id="dimH" class="expin dim" min="1" step="0.1" aria-label="Box height cm">
+      kg <input type="number" id="dimKg" class="expin dim" min="0.1" step="0.1" aria-label="Box weight kg"></span>
+  </div>
+  <div id="unknown"></div>
+  <div id="tablewrap"></div>
+</main>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const scan = $('#scan');
+  let fileName = '', headers = [], rows = [], map = {ean:-1, qty:-1, name:-1, order:-1, price:-1};
+  let linkValue = null;   // order value carried in a share link (the phone has no price column)
+  const money = v => '€' + v.toLocaleString('nl-NL', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  // order value = Σ quantity × unit price (Qogita "€-price" column, excl. VAT)
+  const orderValue = () => {
+    if (map.price < 0) return linkValue;
+    return rows.reduce((s, r, i) => s + need(i) * toNum(r[map.price]), 0);
+  };
+  let counts = [], history = [], unknown = {}, lastIdx = -1, filter = 'all', keyboard = false;
+
+  // ---------- helpers ----------
+  const esc = v => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const normEan = v => {
+    if (v === null || v === undefined) return '';
+    let s = (typeof v === 'number') ? Math.round(v).toString() : String(v).trim();
+    s = s.replace(/\.0+$/, '').replace(/\D/g, '');
+    return s.replace(/^0+/, '');           // EAN-13 / UPC-12 / GTIN-14 match regardless of leading zeros
+  };
+  const showEan = v => (typeof v === 'number') ? Math.round(v).toString() : String(v ?? '');
+  const toNum = v => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : 0; };
+  // Amazon: one expiry date for every product in the shipment (YYYY-MM-DD; default 12 Nov 2028)
+  const EXP_DEFAULT = '2028-11-12';
+  let expAll = EXP_DEFAULT;
+  // Amazon page (title "FBA Pack Scanner"): shipments are built/saved in the tool and packed into boxes
+  const AMZ = /^FBA/.test(document.title);
+  const AMZ_HEADERS = ['name', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes'];
+  let boxes = [], curBox = 1, nBoxes = 1;   // boxes[i] = {boxNumber: units}
+  const DIM_DEFAULT = {l: 60, w: 40, h: 30, kg: 15};   // Orlando's standard carton
+  let dims = {...DIM_DEFAULT};
+  const store = () => {
+    if (!fileName) return;
+    const s = {counts, history, unknown, expAll};
+    if (AMZ) Object.assign(s, {kind: 'fba', boxes, curBox, nBoxes, dims, headers, rows, savedAt: Date.now()});
+    try { localStorage.setItem('qps:' + fileName, JSON.stringify(s)); if (AMZ) localStorage.setItem('qps-last-fba', fileName); } catch(e){}
+  };
+  const load  = () => { try { return JSON.parse(localStorage.getItem('qps:' + fileName) || 'null'); } catch(e){ return null; } };
+
+  let actx;
+  // iPhone only allows sound after a tap: unlock the audio on the first touch/click
+  const unlockAudio = () => {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+    } catch(e) {}
+  };
+  ['touchend','click'].forEach(t => document.addEventListener(t, unlockAudio, {passive: true}));
+  const beep = ok => {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.frequency.value = ok ? 1100 : 220; o.type = ok ? 'sine' : 'square';
+      g.gain.value = 0.15; o.connect(g); g.connect(actx.destination);
+      o.start(); o.stop(actx.currentTime + (ok ? 0.08 : 0.45));
+    } catch(e){}
+  };
+  const say = (text, cls) => {
+    const m = $('#msg'); m.textContent = text; m.className = cls;
+    scan.classList.remove('flash-ok','flash-bad'); void scan.offsetWidth;
+    scan.classList.add(cls === 'bad' ? 'flash-bad' : 'flash-ok');
+    setTimeout(() => scan.classList.remove('flash-ok','flash-bad'), 600);
+  };
+
+  // keep --hh = sticky header height, so scrolled-to rows land just below it
+  const hdr = document.querySelector('header');
+  const setHH = () => document.documentElement.style.setProperty('--hh', hdr.offsetHeight + 'px');
+  try { new ResizeObserver(setHH).observe(hdr); } catch(e) { window.addEventListener('resize', setHH); }
+  setHH();
+
+  // ---------- cursor lock: the scan box always has focus ----------
+  // Only the filter box and the column dropdowns may take focus away (while you use them).
+  const mayHoldFocus = el => el && (el.id === 'search' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA'
+    || el.classList.contains('expin') || !!(el.closest && el.closest('#addbox')));
+  const lock = () => {
+    if (camOn || picking || !$('#sharebox').hidden) return;   // camera, photo or share window open: leave focus alone
+    const a = document.activeElement;
+    if (a !== scan && !mayHoldFocus(a)) scan.focus({preventScroll:true});
+    paintReady();
+  };
+  const paintReady = () => {
+    const live = document.activeElement === scan && document.hasFocus();
+    $('#ready').classList.toggle('live', live);
+    $('#readytxt').textContent = live ? 'Ready to scan' : 'Tap to scan';
+  };
+  window.addEventListener('load', lock);
+  window.addEventListener('focus', lock);
+  window.addEventListener('blur', paintReady);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) lock(); });
+  document.addEventListener('click', () => setTimeout(lock, 0));
+  document.addEventListener('touchend', () => setTimeout(lock, 0));
+  scan.addEventListener('blur', () => setTimeout(lock, 120));
+  scan.addEventListener('focus', paintReady);
+  $('#ready').addEventListener('click', () => scan.focus());
+  setInterval(lock, 700);   // safety net: grabs the cursor back after dialogs, file pickers, alt-tab
+  // a scanner can also "type" while focus is elsewhere: catch digits and route them to the scan box
+  document.addEventListener('keydown', e => {
+    if (document.activeElement === scan || mayHoldFocus(document.activeElement)) return;
+    if (/^[0-9]$/.test(e.key)) { scan.focus(); scan.value += e.key; e.preventDefault(); }
+  });
+
+  // tablets/phones: inputmode="none" keeps the on-screen keyboard closed so a Bluetooth scanner can type
+  $('#kbd').onclick = () => {
+    keyboard = !keyboard;
+    scan.setAttribute('inputmode', keyboard ? 'numeric' : 'none');
+    $('#kbd').classList.toggle('on', keyboard);
+    scan.blur(); setTimeout(() => scan.focus(), 50);
+  };
+
+  // ---------- camera scanning (phone / tablet / webcam) ----------
+  // Reader: the phone's built-in BarcodeDetector (Android Chrome) or, where missing (iPhone/iPad, Windows),
+  // the ZXing-C++ reader from the barcode-detector package — same API, much stronger than the old JS reader.
+  const FORMATS = ['ean_13','ean_8','upc_a','upc_e','code_128','itf'];
+  let detector = null;
+  async function getDetector() {
+    if (detector) return detector;
+    try {
+      if ('BarcodeDetector' in window) {
+        const f = await window.BarcodeDetector.getSupportedFormats();
+        if (f.includes('ean_13')) return detector = new window.BarcodeDetector({formats: FORMATS.filter(x => f.includes(x))});
+      }
+    } catch(e) {}
+    const API = window.BarcodeDetectionAPI;
+    if (API && API.BarcodeDetector) return detector = new API.BarcodeDetector({formats: FORMATS});
+    throw new Error('The barcode reader did not load. Check the internet connection and refresh the page.');
+  }
+
+  let camOn = false, picking = false, lastCode = '', lastAt = 0, stream = null, video = null, loopTimer = null;
+  let facing = 'environment', torchOn = false;
+  const camMsg = t => { $('#camnote').textContent = t; };
+  const crop = document.createElement('canvas');
+
+  function onCode(text) {
+    text = String(text).trim();
+    const now = Date.now();
+    // same barcode ignored for 1.5 s, any barcode for 0.7 s → holding a product in view counts it once
+    if ((text === lastCode && now - lastAt < 1500) || now - lastAt < 700) { if (text === lastCode) lastAt = now; return; }
+    lastCode = text; lastAt = now;
+    camMsg('Read: ' + text);
+    try { navigator.vibrate && navigator.vibrate(60); } catch(e) {}
+    handle(text);
+  }
+
+  async function tuneTrack(track) {
+    try {
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if (caps.focusMode && caps.focusMode.includes('continuous')) await track.applyConstraints({advanced: [{focusMode: 'continuous'}]});
+      $('#torch').hidden = !caps.torch;
+    } catch(e) {}
+  }
+
+  async function startCam() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      say('This browser cannot use the camera here. Open https://do-landnl.github.io/Scanner/ in Safari or Chrome.', 'bad'); beep(false); return;
+    }
+    $('#campanel').hidden = false;
+    try {
+      const det = await getDetector();
+      stream = await navigator.mediaDevices.getUserMedia({audio: false,
+        video: {facingMode: {ideal: facing}, width: {ideal: 1920}, height: {ideal: 1080}}});
+      video = document.createElement('video');
+      video.setAttribute('playsinline', ''); video.setAttribute('muted', ''); video.muted = true; video.autoplay = true;
+      video.srcObject = stream;
+      $('#cam').innerHTML = ''; $('#cam').append(video);
+      const g = document.createElement('div'); g.id = 'camguide'; $('#cam').append(g);
+      await video.play();
+      await tuneTrack(stream.getVideoTracks()[0]);
+      camOn = true;
+      $('#camBtn').classList.add('on'); $('#camBtn').textContent = '■ Stop';
+      camMsg('Camera on. Hold the barcode horizontal along the red line, 10–20 cm away.');
+      let busy = false;
+      const tick = async () => {
+        if (!camOn) return;
+        if (!busy && video.readyState >= 2 && video.videoWidth) {
+          busy = true;
+          try {
+            // read only the band around the red line (faster, fewer misreads), at most 1280 px wide
+            const vw = video.videoWidth, vh = video.videoHeight;
+            const sx = vw * 0.05, sw = vw * 0.9, sh = vh * 0.45, sy = (vh - sh) / 2;
+            const k = Math.min(1, 1280 / sw);
+            crop.width = Math.round(sw * k); crop.height = Math.round(sh * k);
+            crop.getContext('2d').drawImage(video, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
+            const r = await det.detect(crop);
+            if (r.length) onCode(r[0].rawValue);
+          } catch(e) {}
+          busy = false;
+        }
+        loopTimer = setTimeout(tick, 120);
+      };
+      tick();
+      $('#campanel').scrollIntoView({block: 'nearest'});
+    } catch (e) {
+      await stopCam();
+      const m = String(e && (e.message || e.name || e));
+      say(/NotAllowed|Permission|denied|policy/i.test(m)
+        ? 'Camera blocked. iPhone: Settings → Safari → Camera → Allow, then tap Camera again.'
+        : 'Camera could not start: ' + m, 'bad');
+      beep(false);
+    }
+  }
+  async function stopCam() {
+    camOn = false; clearTimeout(loopTimer);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; video = null; torchOn = false;
+    $('#cam').innerHTML = ''; $('#campanel').hidden = true; $('#torch').hidden = true;
+    $('#camBtn').classList.remove('on'); $('#camBtn').textContent = '📷 Camera';
+  }
+  $('#camBtn').onclick = () => camOn ? stopCam() : startCam();
+  $('#flipcam').onclick = async () => { facing = facing === 'environment' ? 'user' : 'environment'; await stopCam(); startCam(); };
+  $('#torch').onclick = async () => {
+    try {
+      const track = stream && stream.getVideoTracks()[0];
+      torchOn = !torchOn; await track.applyConstraints({advanced: [{torch: torchOn}]});
+      $('#torch').classList.toggle('on', torchOn);
+    } catch(e) { $('#torch').hidden = true; }
+  };
+  $('#cam').addEventListener('click', () => { if (stream) tuneTrack(stream.getVideoTracks()[0]); });
+
+  // ---------- photo scanning: the phone's own camera app takes a sharp photo, we read the barcode from it ----------
+  function loadImage(file) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); res(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Could not open the photo')); };
+      img.src = url;
+    });
+  }
+  async function decodePhoto(file) {
+    const det = await getDetector();
+    const img = await loadImage(file);
+    const W = img.naturalWidth, H = img.naturalHeight;
+    // try the photo as-is, then turned 90° (barcode photographed upright)
+    for (const rot of [0, 90]) {
+      for (const max of [2000, 1200]) {
+        const k = Math.min(1, max / Math.max(W, H));
+        const w = Math.round(W * k), h = Math.round(H * k);
+        const cv = document.createElement('canvas');
+        cv.width = rot ? h : w; cv.height = rot ? w : h;
+        const x = cv.getContext('2d');
+        if (rot) { x.translate(h, 0); x.rotate(Math.PI / 2); }
+        x.drawImage(img, 0, 0, w, h);
+        const r = await det.detect(cv);
+        if (r.length) return r[0].rawValue;
+      }
+    }
+    return null;
+  }
+  $('#photoBtn').onclick = () => { picking = true; $('#photo').click(); };
+  window.addEventListener('focus', () => setTimeout(() => { picking = false; }, 1500));
+  $('#photo').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = ''; picking = false;
+    if (!f) return;
+    const m = $('#msg'); m.textContent = 'Reading barcode from photo…'; m.className = 'part';
+    try {
+      const code = await Promise.race([decodePhoto(f), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+      if (code) handle(code);
+      else { say('No barcode found in the photo. Get closer (10–15 cm), keep it sharp, then tap Photo again.', 'bad'); beep(false); }
+    } catch(err) { say('Photo could not be read: ' + (err.message || err), 'bad'); beep(false); }
+  });
+
+  // ---------- file loading ----------
+  $('#file').addEventListener('change', e => { e.target.files[0] && readFile(e.target.files[0]); e.target.value = ''; });
+  const drop = $('#drop');
+  ['dragover','dragenter'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave','drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  document.addEventListener('drop', e => e.dataTransfer.files[0] && readFile(e.dataTransfer.files[0]));
+
+  function readFile(f) {
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+        let best = null, bestAmz = null;
+        wb.SheetNames.forEach(n => {
+          const aoa = XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:true, defval:''});
+          if (!best || aoa.length > best.length) best = aoa;
+          const amz = amazonParse(aoa);   // FBA shipment sheet: product info pasted in one cell + "total labeled" + box columns
+          if (amz && (!bestAmz || amz.length > bestAmz.length)) bestAmz = amz;
+        });
+        if (bestAmz) best = bestAmz;
+        linkValue = null;
+        setup(f.name, best);
+      } catch(err) { say('Could not read this file. Open the .xlsx you downloaded from the Qogita order page.', 'bad'); beep(false); }
+      lock();
+    };
+    r.readAsArrayBuffer(f);
+  }
+
+  // ---------- Amazon FBA shipment sheets ----------
+  // Each product is one cell copied from Seller Central, e.g.
+  //   "Title\nSKU: 9Z-15CW-6AIH\nASIN: B0F45KK552\nFNSKU: X002NSQV9T\n…\nEAN: 4027600447512"  (or "ASIN\nB0…" on two lines)
+  // next to a "total labeled" column and box1, box2… columns. Returns a clean table, or null if the sheet is not like that.
+  const PKEYS = ['SKU', 'ASIN', 'FNSKU', 'EAN', 'UPC', 'Status', 'Condition'];
+  const isKeyLine = ln => /^(SKU|ASIN|FNSKU|EAN|UPC|Status|Condition)\b\s*:?/i.test(ln);
+  // one product's text copied from Seller Central → {title, f: {SKU, ASIN, FNSKU, EAN, UPC}}
+  function parseProductText(text) {
+    const lines = String(text).split(/\n/).map(s => s.trim()).filter(s => s && !/^product image$/i.test(s));
+    const f = {}; let title = '';
+    for (let k = 0; k < lines.length; k++) {
+      const ln = lines[k];
+      const solo = PKEYS.find(K => ln.toUpperCase() === K.toUpperCase());          // "ASIN" then value on next line
+      if (solo) { f[solo.toUpperCase()] = (lines[k + 1] || '').trim(); k++; continue; }
+      ln.replace(/\b(SKU|ASIN|FNSKU|EAN|UPC|Status|Condition)\s*:\s*(\S+)/gi, (m, K, v) => { f[K.toUpperCase()] = v; return m; });
+      const before = ln.split(/\b(?:SKU|ASIN|FNSKU|EAN|UPC)\s*:/i)[0].trim();   // title may share a line with "SKU: …"
+      if (!title && before && !isKeyLine(ln)) title = before;
+    }
+    return {title, f};
+  }
+  // several products pasted at once: a new product starts at a title line after a block that already has codes
+  function splitPasted(text) {
+    const lines = String(text).replace(/\r/g, '').split('\n'), blocks = [];
+    let cur = [], hasCode = false, valueNext = false;
+    lines.forEach(raw => {
+      const ln = raw.trim();
+      if (!ln) return;
+      const solo = PKEYS.some(K => ln.toUpperCase() === K.toUpperCase());
+      const isTitle = !valueNext && !solo && !isKeyLine(ln) && !/^product image$/i.test(ln);
+      if (isTitle && hasCode) { blocks.push(cur.join('\n')); cur = []; hasCode = false; }
+      cur.push(ln);
+      if (/\b(SKU|FNSKU|ASIN)\b/i.test(ln)) hasCode = true;
+      valueNext = solo;
+    });
+    if (cur.length) blocks.push(cur.join('\n'));
+    return blocks.map(parseProductText).filter(p => p.f.SKU || p.f.FNSKU);
+  }
+
+  function amazonParse(aoa) {
+    if (!aoa.some(r => /FNSKU/i.test(String(r[0] ?? '')))) return null;
+    const hr = aoa.findIndex(r => r.some(c => /total|box/i.test(String(c ?? ''))));
+    const head = hr >= 0 ? aoa[hr].map(c => String(c ?? '')) : [];
+    const totalCol = head.findIndex(c => /total/i.test(c));
+    // every column right of "total labeled" is a box, even when only box1/box2 have a heading
+    const width = Math.max(...aoa.map(r => r.length));
+    const first = totalCol >= 0 ? totalCol + 1 : head.findIndex(c => /^\s*box/i.test(c));
+    const boxCols = first > 0 ? Array.from({length: width - first}, (_, k) => first + k) : [];
+    boxCols.forEach((c, k) => { if (!/^\s*box/i.test(head[c] || '')) head[c] = 'box' + (k + 1); });
+    const out = [];
+    aoa.forEach(r => {
+      const text = String(r[0] ?? '');
+      if (!/FNSKU|ASIN/i.test(text)) return;
+      const {title, f} = parseProductText(text);
+      const boxes = boxCols.map(i => [head[i].replace(/\s+/g, ''), toNum(r[i])]).filter(b => b[1] > 0);
+      let qty = totalCol >= 0 ? toNum(r[totalCol]) : 0;
+      if (!qty) qty = boxes.reduce((s, b) => s + b[1], 0);
+      if (!qty) return;                                                               // product listed without a quantity: not in this shipment
+      out.push([title || f.SKU || f.FNSKU, f.EAN || f.UPC || '', f.FNSKU || '', f.SKU || '', f.ASIN || '', qty,
+                boxes.map(b => `${b[0]}: ${b[1]}`).join(' · ')]);
+    });
+    return out.length ? [['name', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes'], ...out] : null;
+  }
+
+  function setup(name, aoa) {
+    // Qogita order downloads have ~15 rows of billing/shipping address before the "gtin" header
+    let hr = aoa.findIndex((r, i) => i < 60 && r.some(c => /^\s*(gtin|ean|ean13|barcode|upc)\b/i.test(String(c))));
+    if (hr < 0) hr = aoa.findIndex(r => r.filter(c => c !== '').length >= 2);
+    headers = aoa[hr].map((h, i) => String(h || ('Col ' + (i + 1))).trim());
+    rows = aoa.slice(hr + 1).filter(r => r.some(c => c !== ''));
+    fileName = name;
+    autoMap();
+    const saved = load();
+    if (saved && saved.counts && saved.counts.length === rows.length) {
+      counts = saved.counts; history = saved.history || []; unknown = saved.unknown || {}; expAll = saved.expAll || EXP_DEFAULT;
+      boxes = saved.boxes && saved.boxes.length === rows.length ? saved.boxes : rows.map(() => ({}));
+      curBox = saved.curBox || 1; nBoxes = saved.nBoxes || 1; dims = {...DIM_DEFAULT, ...(saved.dims || {})};
+      say('Resumed your scans for ' + name, 'ok');
+    } else {
+      counts = rows.map(() => 0); history = []; unknown = {}; expAll = EXP_DEFAULT;
+      boxes = rows.map(() => ({})); curBox = 1; nBoxes = 1; dims = {...DIM_DEFAULT};
+      say(rows.length + ' lines loaded — start scanning', 'ok');
+    }
+    lastIdx = -1;
+    if (AMZ) { store(); amzRefresh(); }
+    $('#expAll').value = expAll;
+    const val = orderValue();
+    $('#fname').textContent = '· ' + name.replace(/\.(xlsx|xls|csv)$/i, '') + (val ? ' · ' + money(val) : '');
+    drop.hidden = true; $('#filters').hidden = false;
+    renderMap(); render();
+  }
+
+  function autoMap() {
+    const find = re => headers.findIndex(h => re.test(h));
+    map.ean   = find(/^\s*(gtin|ean|ean13|barcode|upc)\b/i);
+    if (map.ean < 0) map.ean = find(/gtin|ean|barcode|upc/i);
+    map.qty   = find(/^(qty|quantity|units?|aantal)/i);
+    if (map.qty < 0) map.qty = find(/qty|quantity|units/i);
+    map.name  = find(/^(name|product|title|description)/i);
+    if (map.name < 0) map.name = find(/name|title|product|description/i);
+    map.order = find(/^order/i);
+    map.price = find(/price/i);
+    // extra codes a scan may match (Amazon: FNSKU sticker X00…, seller SKU, ASIN)
+    map.alt = ['FNSKU', 'SKU', 'ASIN'].map(k => headers.findIndex(h => h.toUpperCase() === k)).filter(i => i >= 0);
+    map.fnsku = headers.findIndex(h => h.toUpperCase() === 'FNSKU');
+    map.boxes = headers.findIndex(h => /^boxes$/i.test(h));
+    // only a SKU column that is actually filled (Qogita files have an empty "sku" column)
+    map.sku = headers.findIndex((h, c) => h.toUpperCase() === 'SKU' && rows.some(r => String(r[c] ?? '').trim()));
+    $('#manifest').hidden = map.sku < 0;   // Amazon manifest only makes sense when the lines have a Merchant SKU
+    $('#expAllBox').hidden = map.sku < 0;
+    if (map.ean < 0) {
+      let bestScore = 0;
+      headers.forEach((_, c) => {
+        const score = rows.filter(r => /^\d{8,14}$/.test(normEan(r[c]).padStart(8,'0'))).length;
+        if (score > bestScore) { bestScore = score; map.ean = c; }
+      });
+    }
+  }
+
+  function renderMap() {
+    const box = $('#mapbox');
+    // columns are detected automatically; only show the picker when the barcode column could not be found
+    box.hidden = map.ean >= 0;
+    const sel = (key, label) => `<label>${label} <select id="map-${key}" data-k="${key}"><option value="-1">—</option>${
+      headers.map((h,i) => `<option value="${i}" ${map[key]===i?'selected':''}>${esc(h)}</option>`).join('')}</select></label>`;
+    box.innerHTML = sel('ean','Barcode') + sel('qty','Quantity') + sel('name','Product')
+      + '<span class="note">Found automatically. Change only if wrong.</span>';
+    box.querySelectorAll('select').forEach(s => s.onchange = () => { map[s.dataset.k] = +s.value; render(); s.blur(); lock(); });
+  }
+
+  // ---------- scanning ----------
+  const need = i => map.qty >= 0 ? toNum(rows[i][map.qty]) : 1;
+  const status = i => counts[i] === 0 ? 'todo' : counts[i] < need(i) ? 'part' : counts[i] === need(i) ? 'done' : 'over';
+  const label = i => map.name >= 0 && rows[i][map.name] ? rows[i][map.name] : showEan(rows[i][map.ean]);
+
+  scan.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); handle(scan.value); scan.value = ''; }
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'F2') { e.preventDefault(); undo(); } });
+
+  function handle(raw) {
+    const txt = String(raw).trim().toUpperCase();
+    if (!txt) return;
+    if (!rows.length) { say('Open an order file first', 'bad'); beep(false); return; }
+    // digits → compare as EAN/UPC (leading zeros ignored); anything else → FNSKU / SKU / ASIN exact match
+    const digits = /^\d{6,14}$/.test(txt), code = digits ? normEan(txt) : txt;
+    const hits = rows.map((r, i) =>
+      (digits && map.ean >= 0 && normEan(r[map.ean]) === code) ||
+      (map.alt || []).some(c => String(r[c] ?? '').trim().toUpperCase() === txt) ? i : -1).filter(i => i >= 0);
+    if (!hits.length) {
+      unknown[code] = (unknown[code] || 0) + 1; store();
+      say('✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
+    }
+    if (AMZ) { amzScan(hits); return; }
+    // a scan fills the line with the full ordered quantity; adjust with − / + if fewer are packed
+    const i = hits.find(h => counts[h] < need(h));
+    if (i === undefined) {
+      lastIdx = hits[0];
+      say(`Already done: ${label(hits[0])} — ${counts[hits[0]]} / ${need(hits[0])}. Use − / + to adjust.`, 'part'); beep(false);
+      render(true); return;
+    }
+    setCount(i, need(i));
+    say(`✓ ${label(i)} — ${counts[i]} / ${need(i)}`, 'ok'); beep(true);
+    render(true);
+  }
+  // every change remembers the previous count, so Undo puts it back exactly
+  function setCount(i, n) {
+    history.push({i, prev: counts[i]});
+    counts[i] = Math.max(0, n); lastIdx = i; store();
+  }
+
+  function undo() {
+    if (!history.length) return;
+    const h = history.pop();
+    const i = typeof h === 'number' ? h : h.i;                 // older saved progress stored only the line
+    if (h.box) { if (h.prevBox) boxes[i][h.box] = h.prevBox; else delete boxes[i][h.box]; }
+    counts[i] = typeof h === 'number' ? Math.max(0, counts[i] - 1) : h.prev;
+    lastIdx = i; store();
+    say(`Undone: ${label(i)} — ${counts[i]} / ${need(i)}`, 'part');
+    render(true);
+  }
+  $('#undo').onclick = undo;
+
+  // in-page confirmation (works in every browser and inside the Claude viewer)
+  $('#reset').onclick = () => { if (rows.length) $('#confirmReset').hidden = false; };
+  $('#noReset').onclick = () => { $('#confirmReset').hidden = true; };
+  $('#yesReset').onclick = () => {
+    counts = rows.map(() => 0); history = []; unknown = {}; lastIdx = -1;
+    boxes = rows.map(() => ({})); curBox = 1; nBoxes = 1; store();
+    $('#confirmReset').hidden = true; render(); say('Scans cleared', 'part');
+  };
+
+  // ---------- rendering ----------
+  document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => {
+    filter = b.dataset.f;
+    document.querySelectorAll('[data-f]').forEach(x => x.classList.toggle('on', x === b));
+    render();
+  });
+  $('#search').addEventListener('input', () => render());
+  $('#search').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') { e.target.blur(); lock(); } });
+
+  function render(scrollToLast) {
+    if (!rows.length) {
+      if (AMZ) { $('#tablewrap').innerHTML = ''; $('#stats').innerHTML = ''; $('#bar').style.width = '0%'; renderBoxBar(); }
+      return;
+    }
+    const q = $('#search').value.toLowerCase();
+    let totNeed = 0, totDone = 0, linesDone = 0;
+    rows.forEach((_, i) => { totNeed += need(i); totDone += Math.min(counts[i], need(i)); if (counts[i] >= need(i)) linesDone++; });
+    const unk = Object.values(unknown).reduce((a,b)=>a+b,0);
+    $('#stats').innerHTML = `<span>Lines <b>${linesDone} / ${rows.length}</b></span><span>Units <b>${totDone} / ${totNeed}</b></span>`
+      + (unk ? `<span style="color:var(--bad-ink)">Wrong scans <b>${unk}</b></span>` : '');
+    $('#bar').style.width = (totNeed ? 100 * totDone / totNeed : 0) + '%';
+    if (totNeed && totDone === totNeed && rows.every((_, i) => counts[i] === need(i))) {
+      $('#msg').textContent = AMZ ? `✓ ALL PACKED — ${totNeed} units in ${[...Array(nBoxes)].filter((_, k) => boxUnits(k + 1)).length} box(es). Make the Amazon manifest.`
+        : '✓ ORDER COMPLETE — all ' + totNeed + ' units scanned'; $('#msg').className = 'ok';
+    }
+
+    // under the product name: EAN (phones only), FNSKU and box split (Amazon)
+    const subLine = (r, i) => {
+      const ean = map.ean >= 0 && r[map.ean] !== '' ? `<span class="eansub">${esc(showEan(r[map.ean]))}</span>` : '';
+      const extra = [map.fnsku >= 0 && r[map.fnsku] ? r[map.fnsku] : '',
+                     map.boxes >= 0 && r[map.boxes] ? (AMZ ? 'plan ' : '') + r[map.boxes] : ''].filter(Boolean);
+      const packed = AMZ && boxes[i] ? Object.entries(boxes[i]).filter(([, n]) => n > 0)
+        .map(([b, n]) => `<span class="pbox${+b === curBox ? ' cur' : ''}">Box ${b}: ${n}</span>`).join('') : '';
+      return ean + (extra.length ? `<span class="subinfo">${esc(extra.join(' · '))}</span>` : '')
+        + (packed ? `<span class="packed">${packed}</span>` : '');
+    };
+    // key columns first, then the rest of the file's columns (hidden on phones)
+    const key = [map.name, map.ean].filter(c => c >= 0);
+    const rest = headers.map((_, i) => i).filter(c => !key.includes(c) && c !== map.qty
+      && rows.some(r => r[c] !== '' && r[c] !== null));
+    let html = '<table><thead><tr><th>Scanned</th>' + key.map(c => `<th${c === map.ean ? ' class="eancol"' : ''}>${esc(headers[c])}</th>`).join('')
+      + rest.map(c => `<th class="extra">${esc(headers[c])}</th>`).join('') + '</tr></thead><tbody>';
+    rows.forEach((r, i) => {
+      const st = status(i);
+      if (filter === 'todo' && st !== 'todo') return;
+      if (filter === 'part' && st !== 'part') return;
+      if (filter === 'done' && st !== 'done' && st !== 'over') return;
+      if (q && !r.map(showEan).join(' ').toLowerCase().includes(q)) return;
+      html += `<tr id="r${i}" class="${st === 'todo' ? '' : st}${i === lastIdx ? ' last' : ''}">
+        <td class="cnt"><button class="mini" data-m="${i}" aria-label="minus one">−</button><b>${counts[i]} / ${need(i)}</b><button class="mini" data-p="${i}" aria-label="plus one">+</button>${
+          AMZ ? `<span class="rowtools"><button class="mini" data-q="${i}" title="Change quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span>` : ''}</td>`
+        + key.map(c => c === map.ean ? `<td class="ean eancol">${esc(showEan(r[c]))}</td>`
+            : `<td>${esc(r[c])}${c === map.name ? subLine(r, i) : ''}</td>`).join('')
+        + rest.map(c => `<td class="extra${typeof r[c] === 'number' ? ' num' : ''}">${esc(r[c])}</td>`).join('') + '</tr>';
+    });
+    html += '</tbody></table>';
+    $('#tablewrap').className = 'tablewrap';
+    $('#tablewrap').innerHTML = html;
+    // Amazon: − / + change how many of this product are in the box you are packing now
+    document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { const i = +b.dataset.p;
+      if (AMZ) setBox(i, curBox, (boxes[i][curBox] || 0) + 1); else setCount(i, counts[i] + 1); render(); });
+    document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { const i = +b.dataset.m;
+      if (AMZ) { if (boxes[i][curBox]) setBox(i, curBox, boxes[i][curBox] - 1); else say(`Nothing of this product in Box ${curBox}`, 'part'); }
+      else if (counts[i] > 0) setCount(i, counts[i] - 1); render(); });
+    document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => amzEditQty(+b.dataset.q));
+    document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => amzRemove(+b.dataset.x));
+    if (AMZ) renderBoxBar();
+
+    const u = Object.entries(unknown);
+    $('#unknown').innerHTML = u.length ? 'Scanned but not in this order: ' + u.map(([k,v]) => `<span style="font-family:var(--mono)">${esc(k)}</span> ×${v}`).join(', ') : '';
+    if (scrollToLast && lastIdx >= 0) {
+      const el = document.getElementById('r' + lastIdx);
+      // only scroll when the row is hidden under the header or below the screen
+      if (el) {
+        const r = el.getBoundingClientRect(), top = document.querySelector('header').getBoundingClientRect().bottom;
+        if (r.top < top || r.bottom > window.innerHeight) el.scrollIntoView({block: 'nearest'});
+      }
+    }
+  }
+
+  // ---------- share link: the order travels inside the link (after #, never sent to any server) ----------
+  const b64url = bytes => { let s = ''; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); };
+  const unb64url = str => { const s = atob(str.replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from(s, c => c.charCodeAt(0)); };
+  async function squeeze(text) {
+    const cs = new Blob([text]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    return b64url(new Uint8Array(await new Response(cs).arrayBuffer()));
+  }
+  async function unsqueeze(str) {
+    const ds = new Blob([unb64url(str)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return await new Response(ds).text();
+  }
+  const orderId = () => fileName.replace(/\.(xlsx|xls|csv)$/i, '') || 'order';
+
+  // keep links short: first 3 words of the product name, max 26 characters (brand + product is enough to find it)
+  const shortName = n => {
+    const w = String(n ?? '').replace(/[\t\n]/g, ' ').replace(/\s+/g, ' ').trim().split(' ');
+    const words = w.filter((x, i) => i === 0 || x.toLowerCase() !== w[i - 1].toLowerCase());  // "Medicube Medicube" → "Medicube"
+    return words.slice(0, 3).join(' ').slice(0, 26);
+  };
+  async function makeLink() {
+    // per line: EAN, qty, short name [, FNSKU, box split] — Amazon fields only when the file has them
+    const amz = map.fnsku >= 0;
+    const lines = rows.map((r, i) => {
+      const f = [map.ean >= 0 && normEan(r[map.ean]) ? showEan(r[map.ean]) : '', need(i), map.name >= 0 ? shortName(r[map.name]) : ''];
+      if (amz) f.push(r[map.fnsku] || '', map.boxes >= 0 ? String(r[map.boxes] || '').replace(/box/gi, '').replace(/\s/g, '') : '',
+                      map.sku >= 0 ? r[map.sku] || '' : '');
+      return f.join('\t');
+    }).join('\n');
+    const base = location.href.split('#')[0].split('?')[0];
+    const id = encodeURIComponent(orderId());
+    const val = orderValue(), v = val ? `&v=${val.toFixed(2)}` : '';
+    try { return `${base}#o=${id}${v}&z=${await squeeze(lines)}`; }
+    catch(e) { return `${base}#o=${id}${v}&t=${encodeURIComponent(lines)}`; }
+  }
+
+  $('#share').onclick = async () => {
+    if (!rows.length) { say('Open an order file first, then tap Share link.', 'bad'); return; }
+    const link = await makeLink();
+    $('#sharetitle').textContent = 'Open order ' + orderId() + ' on a phone';
+    $('#sharelink').value = link;
+    const val = orderValue(), units = rows.reduce((s, _, i) => s + need(i), 0);
+    const summary = `${map.fnsku >= 0 ? 'FBA shipment' : 'Qogita order'} ${orderId()}` + (val ? ` · ${money(val)}` : '') + ` · ${rows.length} lines · ${units} units`;
+    $('#sharetitle').textContent = summary;
+    $('#sharewa').href = 'https://wa.me/?text=' + encodeURIComponent(summary + '\nScan: ' + link);
+    const q = $('#shareqr'); q.innerHTML = '';
+    try {
+      const qr = qrcode(0, 'L'); qr.addData(link); qr.make();
+      const img = new Image(); img.alt = 'QR code for this order'; img.src = qr.createDataURL(4, 2); q.append(img);
+    } catch(e) { q.innerHTML = '<p class="note">This order is too big for a QR code. Use Copy link or WhatsApp.</p>'; }
+    $('#sharebox').hidden = false;
+  };
+  $('#shareclose').onclick = () => { $('#sharebox').hidden = true; lock(); };
+  $('#sharebox').addEventListener('click', e => { if (e.target.id === 'sharebox') { $('#sharebox').hidden = true; lock(); } });
+  $('#sharecopy').onclick = async () => {
+    const inp = $('#sharelink');
+    try { await navigator.clipboard.writeText(inp.value); $('#sharecopy').textContent = 'Copied ✓'; }
+    catch(e) { inp.focus(); inp.select(); $('#sharecopy').textContent = 'Press Ctrl+C'; }
+    setTimeout(() => { $('#sharecopy').textContent = 'Copy link'; }, 2000);
+  };
+
+  async function openFromLink() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (!h.get('o') || !(h.get('z') || h.get('t'))) return;
+    try {
+      const text = h.get('z') ? await unsqueeze(h.get('z')) : h.get('t');
+      const ls = text.split('\n').filter(Boolean).map(l => l.split('\t'));
+      const amz = ls.some(f => f.length > 3);
+      const aoa = [amz ? ['gtin', 'quantity', 'name', 'FNSKU', 'Boxes', 'SKU'] : ['gtin', 'quantity', 'name']].concat(ls.map(([ean, qty, name, fnsku, boxes, sku]) =>
+        amz ? [ean, Number(qty) || 1, name || '', fnsku || '', (boxes || '').split('·').filter(Boolean).map(b => 'box' + b.replace(':', ': ')).join(' · '), sku || '']
+            : [ean, Number(qty) || 1, name || '']));
+      linkValue = h.get('v') ? Number(h.get('v')) : null;
+      setup(h.get('o') + '.xlsx', aoa);
+    } catch(e) { say('This order link is damaged. Ask for a new link or open the order file.', 'bad'); }
+  }
+  window.addEventListener('hashchange', openFromLink);
+  openFromLink();
+
+  // ---------- Amazon FBA: build shipment, pack boxes ----------
+  const sumBox = i => Object.values(boxes[i] || {}).reduce((s, n) => s + n, 0);
+  const boxUnits = b => boxes.reduce((s, bx) => s + (bx[b] || 0), 0);
+  // change units of product i in box b; Undo restores box and total
+  function setBox(i, b, n) {
+    boxes[i] = boxes[i] || {};
+    history.push({i, prev: counts[i], box: b, prevBox: boxes[i][b] || 0});
+    if (n > 0) boxes[i][b] = n; else delete boxes[i][b];
+    counts[i] = sumBox(i); lastIdx = i; store();
+  }
+  // a scan puts all units of that product that are not boxed yet into the current box
+  function amzScan(hits) {
+    const i = hits.find(h => counts[h] < need(h));
+    if (i === undefined) {
+      lastIdx = hits[0];
+      say(`All ${need(hits[0])} already packed: ${label(hits[0])}. Use − / + to move units in Box ${curBox}.`, 'part'); beep(false);
+      render(true); return;
+    }
+    const add = need(i) - counts[i];
+    setBox(i, curBox, (boxes[i][curBox] || 0) + add);
+    say(`✓ Box ${curBox}: +${add} ${label(i)} — ${counts[i]} / ${need(i)} packed`, 'ok'); beep(true);
+    render(true);
+  }
+  function renderBoxBar() {
+    const bar = $('#boxbar');
+    bar.hidden = !AMZ || !rows.length;
+    if (bar.hidden) return;
+    let h = '<b>Packing:</b>';
+    for (let b = 1; b <= nBoxes; b++) h += `<button class="bx${b === curBox ? ' on' : ''}" data-box="${b}">Box ${b}<small>${boxUnits(b)}</small></button>`;
+    h += '<button id="newbox">+ New box</button>';
+    bar.innerHTML = h;
+    bar.querySelectorAll('[data-box]').forEach(x => x.onclick = () => { curBox = +x.dataset.box; store(); render(); say(`Packing Box ${curBox} — scan the products for this box`, 'ok'); });
+    $('#newbox').onclick = () => { nBoxes++; curBox = nBoxes; store(); render(); say(`Box ${curBox} started — scan the products for this box`, 'ok'); };
+  }
+  function amzEditQty(i) {
+    const v = prompt(`Labels printed / units to send for:\n${label(i)}`, need(i));
+    if (v === null) return;
+    const n = Math.round(toNum(v));
+    if (n < 1) { say('Quantity must be 1 or more (use ✕ to remove the product).', 'bad'); return; }
+    rows[i][map.qty] = n; store(); render(); lock();
+  }
+  function amzRemove(i) {
+    if (!confirm(`Remove from this shipment?\n${label(i)}`)) return;
+    [rows, counts, boxes].forEach(a => a.splice(i, 1));
+    history = []; lastIdx = -1; store(); autoMap(); render(); say('Product removed', 'part'); lock();
+  }
+  const today = () => new Date().toISOString().slice(0, 10);
+  function savedShipments() {
+    const out = [];
+    try {
+      for (let k = 0; k < localStorage.length; k++) {
+        const key = localStorage.key(k);
+        if (!key.startsWith('qps:')) continue;
+        const s = JSON.parse(localStorage.getItem(key) || 'null');
+        if (s && s.kind === 'fba' && s.rows && s.rows.length) out.push({name: key.slice(4), at: s.savedAt || 0, lines: s.rows.length});
+      }
+    } catch(e) {}
+    return out.sort((a, b) => b.at - a.at);
+  }
+  // header, buttons and saved list after any change of shipment
+  function amzRefresh() {
+    if (!AMZ) return;
+    $('#addbox').hidden = false;
+    $('#dimBox').hidden = !rows.length;
+    $('#dimL').value = dims.l; $('#dimW').value = dims.w; $('#dimH').value = dims.h; $('#dimKg').value = dims.kg;
+    $('#shipname').value = fileName.replace(/\.(xlsx|xls|csv)$/i, '');
+    $('#fname').textContent = fileName ? '· ' + fileName.replace(/\.(xlsx|xls|csv)$/i, '') : '';
+    $('#boxexport').hidden = !rows.length;
+    const sel = $('#savedship');
+    sel.innerHTML = '<option value="">Open saved shipment…</option>' + savedShipments()
+      .map(s => `<option value="${esc(s.name)}"${s.name === fileName ? ' selected' : ''}>${esc(s.name)} (${s.lines} products)</option>`).join('');
+  }
+  function amzStartEmpty(name) {
+    headers = AMZ_HEADERS.slice(); rows = []; counts = []; boxes = []; history = []; unknown = {};
+    curBox = 1; nBoxes = 1; expAll = EXP_DEFAULT; dims = {...DIM_DEFAULT}; lastIdx = -1; fileName = name;
+    autoMap(); $('#expAll').value = expAll;
+    drop.hidden = true; $('#filters').hidden = true; $('#mapbox').hidden = true;
+    amzRefresh(); render();
+  }
+  function amzAdd() {
+    const prods = splitPasted($('#paste').value);
+    if (!prods.length) { say('No product found in the pasted text — it needs at least a SKU or FNSKU line.', 'bad'); beep(false); return; }
+    const qty = Math.max(1, Math.round(toNum($('#addqty').value)) || 1);
+    if (!fileName || headers.join() !== AMZ_HEADERS.join() && !rows.length) amzStartEmpty($('#shipname').value.trim() || 'FBA ' + today());
+    const iName = headers.indexOf('name'), iEan = map.ean, iF = map.fnsku, iSku = headers.findIndex(h => h.toUpperCase() === 'SKU');
+    const iAsin = headers.findIndex(h => h.toUpperCase() === 'ASIN'), iQty = map.qty;
+    let added = 0, more = 0;
+    prods.forEach(({title, f}) => {
+      const same = rows.findIndex(r => (f.SKU && iSku >= 0 && r[iSku] === f.SKU) || (f.FNSKU && iF >= 0 && r[iF] === f.FNSKU));
+      if (same >= 0) { rows[same][iQty] = toNum(rows[same][iQty]) + qty; more++; return; }
+      const r = headers.map(() => '');
+      if (iName >= 0) r[iName] = title || f.SKU || f.FNSKU;
+      if (iEan >= 0) r[iEan] = f.EAN || f.UPC || '';
+      if (iF >= 0) r[iF] = f.FNSKU || '';
+      if (iSku >= 0) r[iSku] = f.SKU || '';
+      if (iAsin >= 0) r[iAsin] = f.ASIN || '';
+      r[iQty] = qty;
+      rows.push(r); counts.push(0); boxes.push({}); added++;
+    });
+    autoMap(); store();
+    drop.hidden = true; $('#filters').hidden = false;
+    $('#paste').value = ''; $('#addqty').value = 1;
+    $('#addnote').textContent = '';
+    amzRefresh(); render();
+    say(`Added ${added} product${added === 1 ? '' : 's'}${more ? `, ${more} already in the shipment got +${qty}` : ''} (${qty} each)`, 'ok'); beep(true);
+    $('#paste').blur(); lock();
+  }
+  if (AMZ) {
+    $('#addbtn').onclick = amzAdd;
+    [['#dimL', 'l'], ['#dimW', 'w'], ['#dimH', 'h'], ['#dimKg', 'kg']].forEach(([id, k]) => $(id).onchange = () => {
+      const v = toNum($(id).value); if (v > 0) dims[k] = v; else $(id).value = dims[k]; store(); $(id).blur(); lock();
+    });
+    $('#addqty').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); amzAdd(); } });
+    $('#paste').addEventListener('input', () => {
+      const n = splitPasted($('#paste').value).length;
+      $('#addnote').textContent = n ? `${n} product${n === 1 ? '' : 's'} found — set the quantity and click Add` : '';
+    });
+    // copy from Seller Central, Ctrl+V anywhere: the details land in the paste box instead of the scan box
+    scan.addEventListener('paste', e => {
+      const t = (e.clipboardData || window.clipboardData).getData('text');
+      if (/\b(FNSKU|SKU)\b/i.test(t) && /\n/.test(t)) {
+        e.preventDefault(); $('#paste').value = t; $('#paste').dispatchEvent(new Event('input'));
+        $('#addqty').focus(); $('#addqty').select();
+      }
+    });
+    $('#newship').onclick = () => {
+      let name = 'FBA ' + today(), k = 2;
+      while (savedShipments().some(s => s.name === name)) name = `FBA ${today()} (${k++})`;
+      amzStartEmpty(name); say(`New shipment "${name}" — paste the first product`, 'ok'); $('#paste').focus();
+    };
+    $('#savedship').onchange = () => {
+      const name = $('#savedship').value; if (!name) return;
+      const s = JSON.parse(localStorage.getItem('qps:' + name) || 'null');
+      if (s && s.rows) setup(name, [s.headers, ...s.rows]);
+      $('#savedship').blur(); lock();
+    };
+    $('#shipname').addEventListener('change', () => {
+      const nn = $('#shipname').value.trim(); if (!nn || nn === fileName) return;
+      try { localStorage.removeItem('qps:' + fileName); } catch(e) {}
+      fileName = nn; store(); amzRefresh(); $('#shipname').blur(); lock();
+    });
+    $('#boxexport').onclick = async () => {
+      if (!rows.length) return;
+      const iSku = headers.findIndex(h => h.toUpperCase() === 'SKU');
+      const head = ['Merchant SKU', 'FNSKU', 'Title', 'Units to send', 'Packed'];
+      for (let b = 1; b <= nBoxes; b++) head.push('Box ' + b);
+      const out = [head];
+      rows.forEach((r, i) => {
+        const line = [iSku >= 0 ? r[iSku] : '', map.fnsku >= 0 ? r[map.fnsku] : '', label(i), need(i), counts[i]];
+        for (let b = 1; b <= nBoxes; b++) line.push(boxes[i][b] || null);
+        out.push(line);
+      });
+      const tot = ['', '', 'Units per box', rows.reduce((s, _, i) => s + need(i), 0), counts.reduce((s, n) => s + n, 0)];
+      for (let b = 1; b <= nBoxes; b++) tot.push(boxUnits(b));
+      out.push([], tot);
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(out);
+      ws['!cols'] = [{wch: 16}, {wch: 12}, {wch: 50}, {wch: 12}, {wch: 8}];
+      XLSX.utils.book_append_sheet(wb, ws, 'Box contents');
+      await saveFile(wb, `BoxContents_${orderId()}.xlsx`);
+      lock();
+    };
+    // opening the page: continue the last shipment (unless a share link brings one)
+    if (!/[#&]o=/.test(location.hash)) {
+      let last = null; try { last = localStorage.getItem('qps-last-fba'); } catch(e) {}
+      let s = null; try { s = last ? JSON.parse(localStorage.getItem('qps:' + last) || 'null') : null; } catch(e) {}
+      if (s && s.rows && s.rows.length) setup(last, [s.headers, ...s.rows]); else amzStartEmpty('FBA ' + today());
+    }
+  }
+
+  // ---------- Amazon "Send to Amazon" manifest upload ----------
+  // Amazon's own blank template (ManifestFileUpload_Template_IncludeExpirationDate_MPL.xlsx), filled on sheet
+  // "Create workflow – template" from row 9: Merchant SKU | Quantity | Expiration date (MM/DD/YYYY).
+  const MANIFEST_B64 = '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';
+  async function saveFile(wb, fn) {
+    const dl = window.claude && window.claude.use ? await window.claude.use('downloads').catch(() => null) : null;
+    if (dl) {
+      try { await dl.save({filename: fn, data: XLSX.write(wb, {type:'array', bookType:'xlsx'})}); say('Saved ' + fn, 'ok'); }
+      catch(e) { if (e && e.code !== 'declined') say('Export not available here: ' + (e.message || e.code), 'bad'); }
+    } else XLSX.writeFile(wb, fn);
+  }
+  $('#expAll').onchange = () => { expAll = $('#expAll').value; store(); $('#expAll').blur(); lock(); };
+  $('#manifest').onclick = async () => {
+    if (!rows.length || map.sku < 0) return;
+    const usDate = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
+    const exp = usDate(expAll) || null;   // no date → cell left empty
+    const missing = rows.filter((r, i) => counts[i] < need(i)).length;
+    const wb = XLSX.read(MANIFEST_B64, {type: 'base64'});
+    const sheet = wb.SheetNames.find(n => /workflow.*template/i.test(n)), ws = wb.Sheets[sheet];
+    let lines = [], skus = new Set(), tooMany = [];
+    if (AMZ) {
+      // packed in boxes: one packing line per SKU per box (Orlando's rule):
+      // Merchant SKU | Quantity = units in that box | Expiry | Lot code (empty) | Units per box | Number of boxes = 1 | L | W | H | kg
+      // headers as on Amazon's example sheet (case-packed SKU columns)
+      XLSX.utils.sheet_add_aoa(ws, [[null, null, 'Optional', null, 'Optional: Use only for case-packed SKUs']], {origin: 'A7'});
+      XLSX.utils.sheet_add_aoa(ws, [['Merchant SKU', 'Quantity', 'Expiration date (MM/DD/YYYY)', 'Manufacturing lot code ', 'Units per box ',
+        'Number of boxes', 'Box length (cm)', 'Box width (cm)', 'Box height (cm)', 'Box weight (kg)']], {origin: 'A8'});
+      const perSku = {};
+      rows.forEach((r, i) => {
+        const sku = String(r[map.sku] || '').trim();
+        if (!sku) return;
+        Object.keys(boxes[i] || {}).map(Number).sort((a, b) => a - b).forEach(b => {
+          const n = boxes[i][b]; if (!n) return;
+          lines.push([sku, n, exp, null, n, 1, dims.l, dims.w, dims.h, dims.kg]);
+          skus.add(sku); perSku[sku] = (perSku[sku] || 0) + 1;
+        });
+      });
+      tooMany = Object.keys(perSku).filter(k => perSku[k] > 4);   // Amazon allows one SKU on max. 4 packing lines
+    } else {
+      // one line per SKU with the scanned quantity (same SKU on two lines is added together)
+      const bySku = new Map();
+      rows.forEach((r, i) => {
+        const sku = String(r[map.sku] || '').trim();
+        if (!sku || !counts[i]) return;
+        bySku.set(sku, [sku, (bySku.get(sku)?.[1] || 0) + counts[i], exp]);
+      });
+      lines = [...bySku.values()]; lines.forEach(l => skus.add(l[0]));
+    }
+    if (!lines.length) { say('Nothing packed yet — scan the products first, then make the manifest.', 'bad'); beep(false); return; }
+    XLSX.utils.sheet_add_aoa(ws, lines, {origin: 'A9'});
+    wb.Workbook = wb.Workbook || {}; wb.Workbook.Views = [{activeTab: wb.SheetNames.indexOf(sheet)}];
+    await saveFile(wb, `ManifestFileUpload_${orderId()}.xlsx`);
+    const units = lines.reduce((s, v) => s + v[1], 0);
+    say(`Amazon manifest: ${skus.size} SKUs, ${lines.length} packing lines, ${units} units`
+      + (missing ? ` — ${missing} product(s) not fully packed, only packed units are in the file` : '')
+      + (tooMany.length ? ` — ⚠ in more than 4 boxes (Amazon max): ${tooMany.join(', ')}` : ''), missing || tooMany.length ? 'part' : 'ok');
+    lock();
+  };
+
+  // ---------- export ----------
+  $('#export').onclick = async () => {
+    if (!rows.length) return;
+    const out = [['Scanned', 'Status', ...headers]];
+    rows.forEach((r, i) => {
+      const st = {todo:'TO DO', part:'PARTIAL', done:'DONE', over:'TOO MANY'}[status(i)];
+      out.push([counts[i], st, ...r.map((v, c) => c === map.ean ? showEan(v) : v)]);
+    });
+    Object.entries(unknown).forEach(([k, v]) => out.push([v, 'NOT IN ORDER', ...headers.map((_, c) => c === map.ean ? k : '')]));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(out), 'Scanned');
+    const fn = fileName.replace(/\.(xlsx|xls|csv)$/i, '') + '_SCANNED.xlsx';
+    // inside the Claude viewer, files go through the downloads capability; a normal browser saves directly
+    const dl = window.claude && window.claude.use ? await window.claude.use('downloads').catch(() => null) : null;
+    if (dl) {
+      try { await dl.save({filename: fn, data: XLSX.write(wb, {type:'array', bookType:'xlsx'})}); say('Saved ' + fn, 'ok'); }
+      catch(e) { if (e && e.code !== 'declined') say('Export not available here: ' + (e.message || e.code), 'bad'); }
+    } else {
+      XLSX.writeFile(wb, fn);
+    }
+    lock();
+  };
+})();
+</script>

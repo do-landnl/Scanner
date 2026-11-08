@@ -97,6 +97,24 @@
   a.btn{font:500 14px var(--sans);padding:8px 12px;border:1px solid #1f9d55;background:#25d366;color:#08311a;border-radius:8px;text-decoration:none}
   #camBtn{background:var(--accent);color:var(--card);border-color:var(--accent);font-weight:700;padding:0 16px;white-space:nowrap;flex:none}
   #camBtn.on{background:var(--bad-ink);border-color:var(--bad-ink);color:var(--card)}
+  #addbox{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;display:grid;gap:8px}
+  .addrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .addrow input,#paste,#savedship{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
+  #shipname{width:14em;max-width:100%} #addqty{width:6em}
+  #paste{width:100%;resize:vertical;font:13px var(--mono);min-width:0}
+  button.primary{background:var(--accent);color:var(--card);border-color:var(--accent);font-weight:700}
+  #boxbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  #boxbar .bx{font-weight:600}
+  #boxbar .bx.on{background:var(--accent);color:var(--card);border-color:var(--accent)}
+  #boxbar .bx small{font-weight:500;opacity:.8;margin-left:4px}
+  .packed{display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
+  .pbox{font:600 11px var(--sans);padding:1px 6px;border-radius:10px;background:var(--head);color:var(--mute)}
+  .pbox.cur{background:var(--accent);color:var(--card)}
+  .rowtools{margin-left:6px;opacity:.75}
+  .dim{width:4.2em}
+  .exp{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--mute);margin-top:4px}
+  .expin{font:12px var(--sans);padding:2px 4px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+  .subinfo{display:block;font:500 12px var(--mono);color:var(--accent);margin-top:2px}
   .eansub{display:none;font:500 12px var(--mono);color:var(--mute);margin-top:2px}
   @media (max-width:700px){ .eancol{display:none} .eansub{display:block} }
   @media (max-width:700px){
@@ -139,6 +157,8 @@
       <input id="photo" type="file" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;left:-9999px" tabindex="-1" aria-hidden="true">
       <button id="kbd" title="Show the on-screen keyboard to type a barcode by hand">Keyboard</button>
       <button id="export">Export Excel</button>
+      <button id="manifest" hidden title="Amazon Send to Amazon upload file with the scanned quantities per SKU">Amazon manifest</button>
+      <button id="boxexport" hidden title="Excel with how many of each SKU are in Box 1, Box 2, …">Box contents</button>
       <button id="share" title="Make a link / QR code that opens this order on a phone">Share link</button>
       <button id="reset">Reset scans</button>
     </div>
@@ -148,6 +168,7 @@
     <div id="ready"><span class="dot"></span><span id="readytxt">Tap to scan</span></div>
     <button id="camBtn" title="Live camera scanning">📷 Camera</button>
   </div>
+  <div id="boxbar" hidden></div>
   <div id="campanel" hidden>
     <div id="cam"></div>
     <div class="camtools">
@@ -182,12 +203,31 @@
     <p class="note">Green = line complete · Yellow = partly scanned · Red = too many or not in this order</p>
   </div>
   <div id="mapbox" class="colmap" hidden></div>
+  <section id="addbox" hidden>
+    <div class="addrow">
+      <label>Shipment <input id="shipname" autocomplete="off"></label>
+      <button id="newship">New shipment</button>
+      <select id="savedship" aria-label="Open a saved shipment"><option value="">Open saved shipment…</option></select>
+    </div>
+    <textarea id="paste" rows="4" placeholder="Paste product details from Seller Central here (title, SKU, ASIN, FNSKU, EAN) — one or more products. Tip: Ctrl+V anywhere on the page also lands here."></textarea>
+    <div class="addrow">
+      <label>Labels printed <input id="addqty" type="number" min="1" step="1" value="1"></label>
+      <button id="addbtn" class="primary">Add to shipment</button>
+      <span class="note" id="addnote"></span>
+    </div>
+  </section>
   <div class="filters" id="filters" hidden>
     <button class="mini on" data-f="all">All</button>
     <button class="mini" data-f="todo">To do</button>
     <button class="mini" data-f="part">Partial</button>
     <button class="mini" data-f="done">Done</button>
     <input id="search" placeholder="Filter by name or barcode…" autocomplete="off">
+    <label id="expAllBox" class="exp" hidden>Expiry (all products) <input type="date" id="expAll" class="expin"></label>
+    <span id="dimBox" class="exp" hidden>Box cm
+      <input type="number" id="dimL" class="expin dim" min="1" step="0.1" aria-label="Box length cm">×
+      <input type="number" id="dimW" class="expin dim" min="1" step="0.1" aria-label="Box width cm">×
+      <input type="number" id="dimH" class="expin dim" min="1" step="0.1" aria-label="Box height cm">
+      kg <input type="number" id="dimKg" class="expin dim" min="0.1" step="0.1" aria-label="Box weight kg"></span>
   </div>
   <div id="unknown"></div>
   <div id="tablewrap"></div>
@@ -217,7 +257,21 @@
   };
   const showEan = v => (typeof v === 'number') ? Math.round(v).toString() : String(v ?? '');
   const toNum = v => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : 0; };
-  const store = () => { try { localStorage.setItem('qps:' + fileName, JSON.stringify({counts, history, unknown})); } catch(e){} };
+  // Amazon: one expiry date for every product in the shipment (YYYY-MM-DD; default 12 Nov 2028)
+  const EXP_DEFAULT = '2028-11-12';
+  let expAll = EXP_DEFAULT;
+  // Amazon page (title "FBA Pack Scanner"): shipments are built/saved in the tool and packed into boxes
+  const AMZ = /^FBA/.test(document.title);
+  const AMZ_HEADERS = ['name', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes'];
+  let boxes = [], curBox = 1, nBoxes = 1;   // boxes[i] = {boxNumber: units}
+  const DIM_DEFAULT = {l: 60, w: 40, h: 30, kg: 15};   // Orlando's standard carton
+  let dims = {...DIM_DEFAULT};
+  const store = () => {
+    if (!fileName) return;
+    const s = {counts, history, unknown, expAll};
+    if (AMZ) Object.assign(s, {kind: 'fba', boxes, curBox, nBoxes, dims, headers, rows, savedAt: Date.now()});
+    try { localStorage.setItem('qps:' + fileName, JSON.stringify(s)); if (AMZ) localStorage.setItem('qps-last-fba', fileName); } catch(e){}
+  };
   const load  = () => { try { return JSON.parse(localStorage.getItem('qps:' + fileName) || 'null'); } catch(e){ return null; } };
 
   let actx;
@@ -254,7 +308,8 @@
 
   // ---------- cursor lock: the scan box always has focus ----------
   // Only the filter box and the column dropdowns may take focus away (while you use them).
-  const mayHoldFocus = el => el && (el.id === 'search' || el.tagName === 'SELECT');
+  const mayHoldFocus = el => el && (el.id === 'search' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA'
+    || el.classList.contains('expin') || !!(el.closest && el.closest('#addbox')));
   const lock = () => {
     if (camOn || picking || !$('#sharebox').hidden) return;   // camera, photo or share window open: leave focus alone
     const a = document.activeElement;
@@ -453,17 +508,83 @@
     r.onload = ev => {
       try {
         const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
-        let best = null;
+        let best = null, bestAmz = null;
         wb.SheetNames.forEach(n => {
           const aoa = XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:true, defval:''});
           if (!best || aoa.length > best.length) best = aoa;
+          const amz = amazonParse(aoa);   // FBA shipment sheet: product info pasted in one cell + "total labeled" + box columns
+          if (amz && (!bestAmz || amz.length > bestAmz.length)) bestAmz = amz;
         });
+        if (bestAmz) best = bestAmz;
         linkValue = null;
         setup(f.name, best);
       } catch(err) { say('Could not read this file. Open the .xlsx you downloaded from the Qogita order page.', 'bad'); beep(false); }
       lock();
     };
     r.readAsArrayBuffer(f);
+  }
+
+  // ---------- Amazon FBA shipment sheets ----------
+  // Each product is one cell copied from Seller Central, e.g.
+  //   "Title\nSKU: 9Z-15CW-6AIH\nASIN: B0F45KK552\nFNSKU: X002NSQV9T\n…\nEAN: 4027600447512"  (or "ASIN\nB0…" on two lines)
+  // next to a "total labeled" column and box1, box2… columns. Returns a clean table, or null if the sheet is not like that.
+  const PKEYS = ['SKU', 'ASIN', 'FNSKU', 'EAN', 'UPC', 'Status', 'Condition'];
+  const isKeyLine = ln => /^(SKU|ASIN|FNSKU|EAN|UPC|Status|Condition)\b\s*:?/i.test(ln);
+  // one product's text copied from Seller Central → {title, f: {SKU, ASIN, FNSKU, EAN, UPC}}
+  function parseProductText(text) {
+    const lines = String(text).split(/\n/).map(s => s.trim()).filter(s => s && !/^product image$/i.test(s));
+    const f = {}; let title = '';
+    for (let k = 0; k < lines.length; k++) {
+      const ln = lines[k];
+      const solo = PKEYS.find(K => ln.toUpperCase() === K.toUpperCase());          // "ASIN" then value on next line
+      if (solo) { f[solo.toUpperCase()] = (lines[k + 1] || '').trim(); k++; continue; }
+      ln.replace(/\b(SKU|ASIN|FNSKU|EAN|UPC|Status|Condition)\s*:\s*(\S+)/gi, (m, K, v) => { f[K.toUpperCase()] = v; return m; });
+      const before = ln.split(/\b(?:SKU|ASIN|FNSKU|EAN|UPC)\s*:/i)[0].trim();   // title may share a line with "SKU: …"
+      if (!title && before && !isKeyLine(ln)) title = before;
+    }
+    return {title, f};
+  }
+  // several products pasted at once: a new product starts at a title line after a block that already has codes
+  function splitPasted(text) {
+    const lines = String(text).replace(/\r/g, '').split('\n'), blocks = [];
+    let cur = [], hasCode = false, valueNext = false;
+    lines.forEach(raw => {
+      const ln = raw.trim();
+      if (!ln) return;
+      const solo = PKEYS.some(K => ln.toUpperCase() === K.toUpperCase());
+      const isTitle = !valueNext && !solo && !isKeyLine(ln) && !/^product image$/i.test(ln);
+      if (isTitle && hasCode) { blocks.push(cur.join('\n')); cur = []; hasCode = false; }
+      cur.push(ln);
+      if (/\b(SKU|FNSKU|ASIN)\b/i.test(ln)) hasCode = true;
+      valueNext = solo;
+    });
+    if (cur.length) blocks.push(cur.join('\n'));
+    return blocks.map(parseProductText).filter(p => p.f.SKU || p.f.FNSKU);
+  }
+
+  function amazonParse(aoa) {
+    if (!aoa.some(r => /FNSKU/i.test(String(r[0] ?? '')))) return null;
+    const hr = aoa.findIndex(r => r.some(c => /total|box/i.test(String(c ?? ''))));
+    const head = hr >= 0 ? aoa[hr].map(c => String(c ?? '')) : [];
+    const totalCol = head.findIndex(c => /total/i.test(c));
+    // every column right of "total labeled" is a box, even when only box1/box2 have a heading
+    const width = Math.max(...aoa.map(r => r.length));
+    const first = totalCol >= 0 ? totalCol + 1 : head.findIndex(c => /^\s*box/i.test(c));
+    const boxCols = first > 0 ? Array.from({length: width - first}, (_, k) => first + k) : [];
+    boxCols.forEach((c, k) => { if (!/^\s*box/i.test(head[c] || '')) head[c] = 'box' + (k + 1); });
+    const out = [];
+    aoa.forEach(r => {
+      const text = String(r[0] ?? '');
+      if (!/FNSKU|ASIN/i.test(text)) return;
+      const {title, f} = parseProductText(text);
+      const boxes = boxCols.map(i => [head[i].replace(/\s+/g, ''), toNum(r[i])]).filter(b => b[1] > 0);
+      let qty = totalCol >= 0 ? toNum(r[totalCol]) : 0;
+      if (!qty) qty = boxes.reduce((s, b) => s + b[1], 0);
+      if (!qty) return;                                                               // product listed without a quantity: not in this shipment
+      out.push([title || f.SKU || f.FNSKU, f.EAN || f.UPC || '', f.FNSKU || '', f.SKU || '', f.ASIN || '', qty,
+                boxes.map(b => `${b[0]}: ${b[1]}`).join(' · ')]);
+    });
+    return out.length ? [['name', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes'], ...out] : null;
   }
 
   function setup(name, aoa) {
@@ -476,13 +597,18 @@
     autoMap();
     const saved = load();
     if (saved && saved.counts && saved.counts.length === rows.length) {
-      counts = saved.counts; history = saved.history || []; unknown = saved.unknown || {};
+      counts = saved.counts; history = saved.history || []; unknown = saved.unknown || {}; expAll = saved.expAll || EXP_DEFAULT;
+      boxes = saved.boxes && saved.boxes.length === rows.length ? saved.boxes : rows.map(() => ({}));
+      curBox = saved.curBox || 1; nBoxes = saved.nBoxes || 1; dims = {...DIM_DEFAULT, ...(saved.dims || {})};
       say('Resumed your scans for ' + name, 'ok');
     } else {
-      counts = rows.map(() => 0); history = []; unknown = {};
+      counts = rows.map(() => 0); history = []; unknown = {}; expAll = EXP_DEFAULT;
+      boxes = rows.map(() => ({})); curBox = 1; nBoxes = 1; dims = {...DIM_DEFAULT};
       say(rows.length + ' lines loaded — start scanning', 'ok');
     }
     lastIdx = -1;
+    if (AMZ) { store(); amzRefresh(); }
+    $('#expAll').value = expAll;
     const val = orderValue();
     $('#fname').textContent = '· ' + name.replace(/\.(xlsx|xls|csv)$/i, '') + (val ? ' · ' + money(val) : '');
     drop.hidden = true; $('#filters').hidden = false;
@@ -499,6 +625,14 @@
     if (map.name < 0) map.name = find(/name|title|product|description/i);
     map.order = find(/^order/i);
     map.price = find(/price/i);
+    // extra codes a scan may match (Amazon: FNSKU sticker X00…, seller SKU, ASIN)
+    map.alt = ['FNSKU', 'SKU', 'ASIN'].map(k => headers.findIndex(h => h.toUpperCase() === k)).filter(i => i >= 0);
+    map.fnsku = headers.findIndex(h => h.toUpperCase() === 'FNSKU');
+    map.boxes = headers.findIndex(h => /^boxes$/i.test(h));
+    // only a SKU column that is actually filled (Qogita files have an empty "sku" column)
+    map.sku = headers.findIndex((h, c) => h.toUpperCase() === 'SKU' && rows.some(r => String(r[c] ?? '').trim()));
+    $('#manifest').hidden = map.sku < 0;   // Amazon manifest only makes sense when the lines have a Merchant SKU
+    $('#expAllBox').hidden = map.sku < 0;
     if (map.ean < 0) {
       let bestScore = 0;
       headers.forEach((_, c) => {
@@ -530,14 +664,19 @@
   document.addEventListener('keydown', e => { if (e.key === 'F2') { e.preventDefault(); undo(); } });
 
   function handle(raw) {
-    const code = normEan(raw);
-    if (!code) return;
+    const txt = String(raw).trim().toUpperCase();
+    if (!txt) return;
     if (!rows.length) { say('Open an order file first', 'bad'); beep(false); return; }
-    const hits = rows.map((r, i) => normEan(r[map.ean]) === code ? i : -1).filter(i => i >= 0);
+    // digits → compare as EAN/UPC (leading zeros ignored); anything else → FNSKU / SKU / ASIN exact match
+    const digits = /^\d{6,14}$/.test(txt), code = digits ? normEan(txt) : txt;
+    const hits = rows.map((r, i) =>
+      (digits && map.ean >= 0 && normEan(r[map.ean]) === code) ||
+      (map.alt || []).some(c => String(r[c] ?? '').trim().toUpperCase() === txt) ? i : -1).filter(i => i >= 0);
     if (!hits.length) {
       unknown[code] = (unknown[code] || 0) + 1; store();
       say('✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
     }
+    if (AMZ) { amzScan(hits); return; }
     // a scan fills the line with the full ordered quantity; adjust with − / + if fewer are packed
     const i = hits.find(h => counts[h] < need(h));
     if (i === undefined) {
@@ -559,6 +698,7 @@
     if (!history.length) return;
     const h = history.pop();
     const i = typeof h === 'number' ? h : h.i;                 // older saved progress stored only the line
+    if (h.box) { if (h.prevBox) boxes[i][h.box] = h.prevBox; else delete boxes[i][h.box]; }
     counts[i] = typeof h === 'number' ? Math.max(0, counts[i] - 1) : h.prev;
     lastIdx = i; store();
     say(`Undone: ${label(i)} — ${counts[i]} / ${need(i)}`, 'part');
@@ -570,7 +710,8 @@
   $('#reset').onclick = () => { if (rows.length) $('#confirmReset').hidden = false; };
   $('#noReset').onclick = () => { $('#confirmReset').hidden = true; };
   $('#yesReset').onclick = () => {
-    counts = rows.map(() => 0); history = []; unknown = {}; lastIdx = -1; store();
+    counts = rows.map(() => 0); history = []; unknown = {}; lastIdx = -1;
+    boxes = rows.map(() => ({})); curBox = 1; nBoxes = 1; store();
     $('#confirmReset').hidden = true; render(); say('Scans cleared', 'part');
   };
 
@@ -584,7 +725,10 @@
   $('#search').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') { e.target.blur(); lock(); } });
 
   function render(scrollToLast) {
-    if (!rows.length) return;
+    if (!rows.length) {
+      if (AMZ) { $('#tablewrap').innerHTML = ''; $('#stats').innerHTML = ''; $('#bar').style.width = '0%'; renderBoxBar(); }
+      return;
+    }
     const q = $('#search').value.toLowerCase();
     let totNeed = 0, totDone = 0, linesDone = 0;
     rows.forEach((_, i) => { totNeed += need(i); totDone += Math.min(counts[i], need(i)); if (counts[i] >= need(i)) linesDone++; });
@@ -593,9 +737,20 @@
       + (unk ? `<span style="color:var(--bad-ink)">Wrong scans <b>${unk}</b></span>` : '');
     $('#bar').style.width = (totNeed ? 100 * totDone / totNeed : 0) + '%';
     if (totNeed && totDone === totNeed && rows.every((_, i) => counts[i] === need(i))) {
-      $('#msg').textContent = '✓ ORDER COMPLETE — all ' + totNeed + ' units scanned'; $('#msg').className = 'ok';
+      $('#msg').textContent = AMZ ? `✓ ALL PACKED — ${totNeed} units in ${[...Array(nBoxes)].filter((_, k) => boxUnits(k + 1)).length} box(es). Make the Amazon manifest.`
+        : '✓ ORDER COMPLETE — all ' + totNeed + ' units scanned'; $('#msg').className = 'ok';
     }
 
+    // under the product name: EAN (phones only), FNSKU and box split (Amazon)
+    const subLine = (r, i) => {
+      const ean = map.ean >= 0 && r[map.ean] !== '' ? `<span class="eansub">${esc(showEan(r[map.ean]))}</span>` : '';
+      const extra = [map.fnsku >= 0 && r[map.fnsku] ? r[map.fnsku] : '',
+                     map.boxes >= 0 && r[map.boxes] ? (AMZ ? 'plan ' : '') + r[map.boxes] : ''].filter(Boolean);
+      const packed = AMZ && boxes[i] ? Object.entries(boxes[i]).filter(([, n]) => n > 0)
+        .map(([b, n]) => `<span class="pbox${+b === curBox ? ' cur' : ''}">Box ${b}: ${n}</span>`).join('') : '';
+      return ean + (extra.length ? `<span class="subinfo">${esc(extra.join(' · '))}</span>` : '')
+        + (packed ? `<span class="packed">${packed}</span>` : '');
+    };
     // key columns first, then the rest of the file's columns (hidden on phones)
     const key = [map.name, map.ean].filter(c => c >= 0);
     const rest = headers.map((_, i) => i).filter(c => !key.includes(c) && c !== map.qty
@@ -609,16 +764,24 @@
       if (filter === 'done' && st !== 'done' && st !== 'over') return;
       if (q && !r.map(showEan).join(' ').toLowerCase().includes(q)) return;
       html += `<tr id="r${i}" class="${st === 'todo' ? '' : st}${i === lastIdx ? ' last' : ''}">
-        <td class="cnt"><button class="mini" data-m="${i}" aria-label="minus one">−</button><b>${counts[i]} / ${need(i)}</b><button class="mini" data-p="${i}" aria-label="plus one">+</button></td>`
+        <td class="cnt"><button class="mini" data-m="${i}" aria-label="minus one">−</button><b>${counts[i]} / ${need(i)}</b><button class="mini" data-p="${i}" aria-label="plus one">+</button>${
+          AMZ ? `<span class="rowtools"><button class="mini" data-q="${i}" title="Change quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span>` : ''}</td>`
         + key.map(c => c === map.ean ? `<td class="ean eancol">${esc(showEan(r[c]))}</td>`
-            : `<td>${esc(r[c])}${c === map.name && map.ean >= 0 ? `<span class="eansub">${esc(showEan(r[map.ean]))}</span>` : ''}</td>`).join('')
+            : `<td>${esc(r[c])}${c === map.name ? subLine(r, i) : ''}</td>`).join('')
         + rest.map(c => `<td class="extra${typeof r[c] === 'number' ? ' num' : ''}">${esc(r[c])}</td>`).join('') + '</tr>';
     });
     html += '</tbody></table>';
     $('#tablewrap').className = 'tablewrap';
     $('#tablewrap').innerHTML = html;
-    document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { const i = +b.dataset.p; setCount(i, counts[i] + 1); render(); });
-    document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { const i = +b.dataset.m; if (counts[i] > 0) setCount(i, counts[i] - 1); render(); });
+    // Amazon: − / + change how many of this product are in the box you are packing now
+    document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { const i = +b.dataset.p;
+      if (AMZ) setBox(i, curBox, (boxes[i][curBox] || 0) + 1); else setCount(i, counts[i] + 1); render(); });
+    document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { const i = +b.dataset.m;
+      if (AMZ) { if (boxes[i][curBox]) setBox(i, curBox, boxes[i][curBox] - 1); else say(`Nothing of this product in Box ${curBox}`, 'part'); }
+      else if (counts[i] > 0) setCount(i, counts[i] - 1); render(); });
+    document.querySelectorAll('[data-q]').forEach(b => b.onclick = () => amzEditQty(+b.dataset.q));
+    document.querySelectorAll('[data-x]').forEach(b => b.onclick = () => amzRemove(+b.dataset.x));
+    if (AMZ) renderBoxBar();
 
     const u = Object.entries(unknown);
     $('#unknown').innerHTML = u.length ? 'Scanned but not in this order: ' + u.map(([k,v]) => `<span style="font-family:var(--mono)">${esc(k)}</span> ×${v}`).join(', ') : '';
@@ -652,8 +815,14 @@
     return words.slice(0, 3).join(' ').slice(0, 26);
   };
   async function makeLink() {
-    const lines = rows.map(r => [normEan(r[map.ean]) ? showEan(r[map.ean]) : '', need(rows.indexOf(r)),
-      map.name >= 0 ? shortName(r[map.name]) : ''].join('\t')).join('\n');
+    // per line: EAN, qty, short name [, FNSKU, box split] — Amazon fields only when the file has them
+    const amz = map.fnsku >= 0;
+    const lines = rows.map((r, i) => {
+      const f = [map.ean >= 0 && normEan(r[map.ean]) ? showEan(r[map.ean]) : '', need(i), map.name >= 0 ? shortName(r[map.name]) : ''];
+      if (amz) f.push(r[map.fnsku] || '', map.boxes >= 0 ? String(r[map.boxes] || '').replace(/box/gi, '').replace(/\s/g, '') : '',
+                      map.sku >= 0 ? r[map.sku] || '' : '');
+      return f.join('\t');
+    }).join('\n');
     const base = location.href.split('#')[0].split('?')[0];
     const id = encodeURIComponent(orderId());
     const val = orderValue(), v = val ? `&v=${val.toFixed(2)}` : '';
@@ -667,7 +836,7 @@
     $('#sharetitle').textContent = 'Open order ' + orderId() + ' on a phone';
     $('#sharelink').value = link;
     const val = orderValue(), units = rows.reduce((s, _, i) => s + need(i), 0);
-    const summary = `Qogita order ${orderId()}` + (val ? ` · ${money(val)}` : '') + ` · ${rows.length} lines · ${units} units`;
+    const summary = `${map.fnsku >= 0 ? 'FBA shipment' : 'Qogita order'} ${orderId()}` + (val ? ` · ${money(val)}` : '') + ` · ${rows.length} lines · ${units} units`;
     $('#sharetitle').textContent = summary;
     $('#sharewa').href = 'https://wa.me/?text=' + encodeURIComponent(summary + '\nScan: ' + link);
     const q = $('#shareqr'); q.innerHTML = '';
@@ -691,15 +860,246 @@
     if (!h.get('o') || !(h.get('z') || h.get('t'))) return;
     try {
       const text = h.get('z') ? await unsqueeze(h.get('z')) : h.get('t');
-      const aoa = [['gtin', 'quantity', 'name']].concat(text.split('\n').filter(Boolean).map(l => {
-        const [ean, qty, name] = l.split('\t'); return [ean, Number(qty) || 1, name || ''];
-      }));
+      const ls = text.split('\n').filter(Boolean).map(l => l.split('\t'));
+      const amz = ls.some(f => f.length > 3);
+      const aoa = [amz ? ['gtin', 'quantity', 'name', 'FNSKU', 'Boxes', 'SKU'] : ['gtin', 'quantity', 'name']].concat(ls.map(([ean, qty, name, fnsku, boxes, sku]) =>
+        amz ? [ean, Number(qty) || 1, name || '', fnsku || '', (boxes || '').split('·').filter(Boolean).map(b => 'box' + b.replace(':', ': ')).join(' · '), sku || '']
+            : [ean, Number(qty) || 1, name || '']));
       linkValue = h.get('v') ? Number(h.get('v')) : null;
       setup(h.get('o') + '.xlsx', aoa);
     } catch(e) { say('This order link is damaged. Ask for a new link or open the order file.', 'bad'); }
   }
   window.addEventListener('hashchange', openFromLink);
   openFromLink();
+
+  // ---------- Amazon FBA: build shipment, pack boxes ----------
+  const sumBox = i => Object.values(boxes[i] || {}).reduce((s, n) => s + n, 0);
+  const boxUnits = b => boxes.reduce((s, bx) => s + (bx[b] || 0), 0);
+  // change units of product i in box b; Undo restores box and total
+  function setBox(i, b, n) {
+    boxes[i] = boxes[i] || {};
+    history.push({i, prev: counts[i], box: b, prevBox: boxes[i][b] || 0});
+    if (n > 0) boxes[i][b] = n; else delete boxes[i][b];
+    counts[i] = sumBox(i); lastIdx = i; store();
+  }
+  // a scan puts all units of that product that are not boxed yet into the current box
+  function amzScan(hits) {
+    const i = hits.find(h => counts[h] < need(h));
+    if (i === undefined) {
+      lastIdx = hits[0];
+      say(`All ${need(hits[0])} already packed: ${label(hits[0])}. Use − / + to move units in Box ${curBox}.`, 'part'); beep(false);
+      render(true); return;
+    }
+    const add = need(i) - counts[i];
+    setBox(i, curBox, (boxes[i][curBox] || 0) + add);
+    say(`✓ Box ${curBox}: +${add} ${label(i)} — ${counts[i]} / ${need(i)} packed`, 'ok'); beep(true);
+    render(true);
+  }
+  function renderBoxBar() {
+    const bar = $('#boxbar');
+    bar.hidden = !AMZ || !rows.length;
+    if (bar.hidden) return;
+    let h = '<b>Packing:</b>';
+    for (let b = 1; b <= nBoxes; b++) h += `<button class="bx${b === curBox ? ' on' : ''}" data-box="${b}">Box ${b}<small>${boxUnits(b)}</small></button>`;
+    h += '<button id="newbox">+ New box</button>';
+    bar.innerHTML = h;
+    bar.querySelectorAll('[data-box]').forEach(x => x.onclick = () => { curBox = +x.dataset.box; store(); render(); say(`Packing Box ${curBox} — scan the products for this box`, 'ok'); });
+    $('#newbox').onclick = () => { nBoxes++; curBox = nBoxes; store(); render(); say(`Box ${curBox} started — scan the products for this box`, 'ok'); };
+  }
+  function amzEditQty(i) {
+    const v = prompt(`Labels printed / units to send for:\n${label(i)}`, need(i));
+    if (v === null) return;
+    const n = Math.round(toNum(v));
+    if (n < 1) { say('Quantity must be 1 or more (use ✕ to remove the product).', 'bad'); return; }
+    rows[i][map.qty] = n; store(); render(); lock();
+  }
+  function amzRemove(i) {
+    if (!confirm(`Remove from this shipment?\n${label(i)}`)) return;
+    [rows, counts, boxes].forEach(a => a.splice(i, 1));
+    history = []; lastIdx = -1; store(); autoMap(); render(); say('Product removed', 'part'); lock();
+  }
+  const today = () => new Date().toISOString().slice(0, 10);
+  function savedShipments() {
+    const out = [];
+    try {
+      for (let k = 0; k < localStorage.length; k++) {
+        const key = localStorage.key(k);
+        if (!key.startsWith('qps:')) continue;
+        const s = JSON.parse(localStorage.getItem(key) || 'null');
+        if (s && s.kind === 'fba' && s.rows && s.rows.length) out.push({name: key.slice(4), at: s.savedAt || 0, lines: s.rows.length});
+      }
+    } catch(e) {}
+    return out.sort((a, b) => b.at - a.at);
+  }
+  // header, buttons and saved list after any change of shipment
+  function amzRefresh() {
+    if (!AMZ) return;
+    $('#addbox').hidden = false;
+    $('#dimBox').hidden = !rows.length;
+    $('#dimL').value = dims.l; $('#dimW').value = dims.w; $('#dimH').value = dims.h; $('#dimKg').value = dims.kg;
+    $('#shipname').value = fileName.replace(/\.(xlsx|xls|csv)$/i, '');
+    $('#fname').textContent = fileName ? '· ' + fileName.replace(/\.(xlsx|xls|csv)$/i, '') : '';
+    $('#boxexport').hidden = !rows.length;
+    const sel = $('#savedship');
+    sel.innerHTML = '<option value="">Open saved shipment…</option>' + savedShipments()
+      .map(s => `<option value="${esc(s.name)}"${s.name === fileName ? ' selected' : ''}>${esc(s.name)} (${s.lines} products)</option>`).join('');
+  }
+  function amzStartEmpty(name) {
+    headers = AMZ_HEADERS.slice(); rows = []; counts = []; boxes = []; history = []; unknown = {};
+    curBox = 1; nBoxes = 1; expAll = EXP_DEFAULT; dims = {...DIM_DEFAULT}; lastIdx = -1; fileName = name;
+    autoMap(); $('#expAll').value = expAll;
+    drop.hidden = true; $('#filters').hidden = true; $('#mapbox').hidden = true;
+    amzRefresh(); render();
+  }
+  function amzAdd() {
+    const prods = splitPasted($('#paste').value);
+    if (!prods.length) { say('No product found in the pasted text — it needs at least a SKU or FNSKU line.', 'bad'); beep(false); return; }
+    const qty = Math.max(1, Math.round(toNum($('#addqty').value)) || 1);
+    if (!fileName || headers.join() !== AMZ_HEADERS.join() && !rows.length) amzStartEmpty($('#shipname').value.trim() || 'FBA ' + today());
+    const iName = headers.indexOf('name'), iEan = map.ean, iF = map.fnsku, iSku = headers.findIndex(h => h.toUpperCase() === 'SKU');
+    const iAsin = headers.findIndex(h => h.toUpperCase() === 'ASIN'), iQty = map.qty;
+    let added = 0, more = 0;
+    prods.forEach(({title, f}) => {
+      const same = rows.findIndex(r => (f.SKU && iSku >= 0 && r[iSku] === f.SKU) || (f.FNSKU && iF >= 0 && r[iF] === f.FNSKU));
+      if (same >= 0) { rows[same][iQty] = toNum(rows[same][iQty]) + qty; more++; return; }
+      const r = headers.map(() => '');
+      if (iName >= 0) r[iName] = title || f.SKU || f.FNSKU;
+      if (iEan >= 0) r[iEan] = f.EAN || f.UPC || '';
+      if (iF >= 0) r[iF] = f.FNSKU || '';
+      if (iSku >= 0) r[iSku] = f.SKU || '';
+      if (iAsin >= 0) r[iAsin] = f.ASIN || '';
+      r[iQty] = qty;
+      rows.push(r); counts.push(0); boxes.push({}); added++;
+    });
+    autoMap(); store();
+    drop.hidden = true; $('#filters').hidden = false;
+    $('#paste').value = ''; $('#addqty').value = 1;
+    $('#addnote').textContent = '';
+    amzRefresh(); render();
+    say(`Added ${added} product${added === 1 ? '' : 's'}${more ? `, ${more} already in the shipment got +${qty}` : ''} (${qty} each)`, 'ok'); beep(true);
+    $('#paste').blur(); lock();
+  }
+  if (AMZ) {
+    $('#addbtn').onclick = amzAdd;
+    [['#dimL', 'l'], ['#dimW', 'w'], ['#dimH', 'h'], ['#dimKg', 'kg']].forEach(([id, k]) => $(id).onchange = () => {
+      const v = toNum($(id).value); if (v > 0) dims[k] = v; else $(id).value = dims[k]; store(); $(id).blur(); lock();
+    });
+    $('#addqty').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); amzAdd(); } });
+    $('#paste').addEventListener('input', () => {
+      const n = splitPasted($('#paste').value).length;
+      $('#addnote').textContent = n ? `${n} product${n === 1 ? '' : 's'} found — set the quantity and click Add` : '';
+    });
+    // copy from Seller Central, Ctrl+V anywhere: the details land in the paste box instead of the scan box
+    scan.addEventListener('paste', e => {
+      const t = (e.clipboardData || window.clipboardData).getData('text');
+      if (/\b(FNSKU|SKU)\b/i.test(t) && /\n/.test(t)) {
+        e.preventDefault(); $('#paste').value = t; $('#paste').dispatchEvent(new Event('input'));
+        $('#addqty').focus(); $('#addqty').select();
+      }
+    });
+    $('#newship').onclick = () => {
+      let name = 'FBA ' + today(), k = 2;
+      while (savedShipments().some(s => s.name === name)) name = `FBA ${today()} (${k++})`;
+      amzStartEmpty(name); say(`New shipment "${name}" — paste the first product`, 'ok'); $('#paste').focus();
+    };
+    $('#savedship').onchange = () => {
+      const name = $('#savedship').value; if (!name) return;
+      const s = JSON.parse(localStorage.getItem('qps:' + name) || 'null');
+      if (s && s.rows) setup(name, [s.headers, ...s.rows]);
+      $('#savedship').blur(); lock();
+    };
+    $('#shipname').addEventListener('change', () => {
+      const nn = $('#shipname').value.trim(); if (!nn || nn === fileName) return;
+      try { localStorage.removeItem('qps:' + fileName); } catch(e) {}
+      fileName = nn; store(); amzRefresh(); $('#shipname').blur(); lock();
+    });
+    $('#boxexport').onclick = async () => {
+      if (!rows.length) return;
+      const iSku = headers.findIndex(h => h.toUpperCase() === 'SKU');
+      const head = ['Merchant SKU', 'FNSKU', 'Title', 'Units to send', 'Packed'];
+      for (let b = 1; b <= nBoxes; b++) head.push('Box ' + b);
+      const out = [head];
+      rows.forEach((r, i) => {
+        const line = [iSku >= 0 ? r[iSku] : '', map.fnsku >= 0 ? r[map.fnsku] : '', label(i), need(i), counts[i]];
+        for (let b = 1; b <= nBoxes; b++) line.push(boxes[i][b] || null);
+        out.push(line);
+      });
+      const tot = ['', '', 'Units per box', rows.reduce((s, _, i) => s + need(i), 0), counts.reduce((s, n) => s + n, 0)];
+      for (let b = 1; b <= nBoxes; b++) tot.push(boxUnits(b));
+      out.push([], tot);
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(out);
+      ws['!cols'] = [{wch: 16}, {wch: 12}, {wch: 50}, {wch: 12}, {wch: 8}];
+      XLSX.utils.book_append_sheet(wb, ws, 'Box contents');
+      await saveFile(wb, `BoxContents_${orderId()}.xlsx`);
+      lock();
+    };
+    // opening the page: continue the last shipment (unless a share link brings one)
+    if (!/[#&]o=/.test(location.hash)) {
+      let last = null; try { last = localStorage.getItem('qps-last-fba'); } catch(e) {}
+      let s = null; try { s = last ? JSON.parse(localStorage.getItem('qps:' + last) || 'null') : null; } catch(e) {}
+      if (s && s.rows && s.rows.length) setup(last, [s.headers, ...s.rows]); else amzStartEmpty('FBA ' + today());
+    }
+  }
+
+  // ---------- Amazon "Send to Amazon" manifest upload ----------
+  // Amazon's own blank template (ManifestFileUpload_Template_IncludeExpirationDate_MPL.xlsx), filled on sheet
+  // "Create workflow – template" from row 9: Merchant SKU | Quantity | Expiration date (MM/DD/YYYY).
+  const MANIFEST_B64 = 'UEsDBBQAAAAIAHyKxVxGx01IlQAAAM0AAAAQAAAAZG9jUHJvcHMvYXBwLnhtbE3PTQvCMAwG4L9SdreZih6kDkQ9ip68zy51hbYpbYT67+0EP255ecgboi6JIia2mEXxLuRtMzLHDUDWI/o+y8qhiqHke64x3YGMsRoPpB8eA8OibdeAhTEMOMzit7Dp1C5GZ3XPlkJ3sjpRJsPiWDQ6sScfq9wcChDneiU+ixNLOZcrBf+LU8sVU57mym/8ZAW/B7oXUEsDBBQAAAAIAHyKxVzZeSfXFAEAAAUCAAARAAAAZG9jUHJvcHMvY29yZS54bWyFkU1rwzAMhv9KyD21nbYZM2kO+zotbLCMjd2MrbRmcWxsjbT/fm7Wpi0bDHzxq0ePBCql49J6ePbWgUcNIdmarg9culW6QXSckCA3YESYRaKPxdZ6IzB+/Zo4IT/FGkhOaUEMoFACBdkLMzcZ04NSyUnpvnw3CpQk0IGBHgNhM0ZOLII34c+GsTKR26AnahiG2TAfubgRI+/148u4fKb7gKKXkFalklx6EGh9da8G4VVJzqLyMPknAJVEP8edg1V6rLzNb++ah7TKaU4zepUx2rAlXxQ8Lz72rov+k9BYpVv9n7HIaHzLhjG+uObLc+NRUJXxaJ0IWB+Cm11Va+ltsC0mT22rJSSvAXxJfoNjdnnx6htQSwMEFAAAAAgAfIrFXMEXEL6SBgAAxiAAABMAAAB4bC90aGVtZS90aGVtZTEueG1s7VnNb9s2FL8P2P8g6O5KtiV/BHUKW7b7lTRB43bokZZpizElGiSVxCgKDO1plwEDumGXAbvtMAwrsAIrdtkfE6DF1v0Re5K/RJtqkzYtOiwOYJPU7z3++N7j44t49dpJSI0jzAVhUcMsXrFNA0c+G5Bo1DDv9bqFmmkIiaIBoizCDXOKhXlt+/PPrqItGeAQGyAfiS3UMAMpJ1uWJXwYRuIKm+AIng0ZD5GELh9ZA46OQW9IrZJtV6wQkcg0IhSC2r3hkPjY6CUqze2F8g6Fr0iKZMCn/MBPZ8xKpNjBuJj8iKnwKDeOEG2YMM+AHffwiTQNioSEBw3TTj+mtX3VWgpRmSObkeumn7ncXGAwLqVyfNRfCjqO61SaS/2lmf5NXKfaqXQqS30pAPk+rLSo0Vktec4cmwHNmhrd7Wq7XFTwGf3lDXzTTf4UfHmFdzbw3a63smEGNGu6G3i3VW+1Vf3uCl/ZwFftZtupKvgUFFASjTfQtlspe4vVLiFDRm9o4XXX6VZLc/gKZWWiayYfybxYC9Eh410ApM5FkkSGnE7wEPmA8xAlfU6MHTIKIPAmKGIChu2S3bXL8J38OWkr9SjawigjPRvyxcZQwscQPicT2TBvgVYzA3n54sXp4+enj38/ffLk9PGv87k35W6gaJSVe/3TN//88KXx928/vn76rR4vsvhXv3z16o8/36ReKrS+e/bq+bOX33/9189PNfAmR/0svEdCLIw7+Ni4y0JYoGYC3Ofnk+gFiCgSKACkBtiRgQK8M0VUh2th1YT3OWQKHfB6fKhwPQh4LIkGeDsIFeAuY7TFuHY5t5O5ssuJo5F+ch5ncXcROtLN7a05uBNPIOSJTqUXYIXmPgVvoxGOsDSSZ2yMsUbsASGKXXeJz5lgQ2k8IEYLEa1JeqQv9UI3SAh+meoIgqsV2+zeN1qM6tS38ZGKhG2BqE4lpooZr6NYolDLGIU0i9xBMtCRPJhyXzG4kODpEabM6AywEDqZPT5V6N6GDKN3+y6dhiqSSzLWIXcQY1lkm429AIUTLWcSBVnsTTGGEEXGPpNaEkzdIUkf/ICiXHffJ1ieb1vfgwykD5DkScx1WwIzdT9O6RBhnfImD5Xs2uREGx2teKSE9g7GFB2jAcbGvZs6PJswPelbAWSVG1hnm1tIjdWkH2EBZVJS12gcS4QSsgd4xHL47E7XEs8URSHieZrvjNWQ6cApp02le9QfK6mU8GTT6knsiRCdSet+gJSwSvpCH69THp13j4HM4TvI4HPLQGI/s216iGJ9wPQQFBi6dAsisV4k2U6pWKyVG6qbduUGa63eCUn01uJnrexxP07Z88EKnosvdfJSynqBk4f7D5Y1bRRH+xhOksuq5rKq+T9WNXl7+bKWuaxlLmuZj1bLrMoXK/uWJ9US5r7yGRJKD+SU4h2RFj4C9v6gC4NpJxVavmGaBNCcT6fgRhylbYMz+QWRwUGAJjBNMZ1hJOaqR8KYMAGlk5mrOy294nCXDWajxeLipSYIILkah9JrMQ6FmpyNVqqrt3dL9WlvJLIE3FTp2UlkJlNJlDUkquWzkSjaF8WirmFRK76JhZXxChxOBkreh7vOjBGEG4T0IPHTTH7h3Qv3dJ4x1WWXNMurOxfmaYVEJtxUEpkwDODwWB++YF/X63pXl7Q0qrUP4WtrMzfQSO0Zx7Dnyi6o8dGkYQ7hnyZohhPQJ5JMhegoapi+nBv6XTLLhAvZRiKYwdJHs/WHRGJuUBJCrGfdQKMVt2Kpan+65Or2p2c5a93JeDjEvswZWXXh2UyJ9ul7gpMOi4H0QTA4Nvo05ncRGMqtFhMDDoiQS2sOCM8E98qKa+lqvhWVy5bVFkV0EqD5iZJN5jN42l7SyawjZbq+Kktnwv6oexGn7tuF1pJmzgFSzc1iH+6Qz7Aq61m52lxXr9lvPiXe/0DIUKvpqZX11PLOjgssCDLTVXLsVsr15nueButRa2XqyrS3cavN+ocQ+W2oVmMqxezl2AmU397iPnKWCdLRRXY5kUbMScN8aLtNxyu5XsGuuZ2CU3bsQs1tlgtN1y0XO27RbrdKj8AoMgiL7mzuLvyzT6fzS/t0fOPiPlyU2ld8FlosrYOtVDi9uC+W8i/uDQKWeVgpdevleqtSqJeb3YLTbtUKda/SKrQrXrXdbXturd59ZBpHKdhplj2n0qkVKkXPKzgVO6FfqxeqTqnUdKrNWsdpPprbGla++F2YN+W1/S9QSwMEFAAAAAgAfIrFXNKO2snEBAAAawwAABgAAAB4bC93b3Jrc2hlZXRzL3NoZWV0MS54bWytVl1uGzcQfs8pBnpKAEeS/21BFuA6CBKgTQIrTZ6p3VktYe5yQ3IlOU+9Qy/Qs/QoPUm/IbXqJmgUNeiDZe6QM/NxvvnhdG3dgy+ZA20qU/ubQRlCMxmNfFZypfzQNlxjp7CuUgGfbjnyjWOVR6XKjE7G44tRpXQ9mE2j7J2bTW0bjK75nSPfVpVyjz+xseubwfGgE9zrZRmiYDSbNmrJcw6/NlDA52hnJ9cV117bmhwXN4Pb48ntddSIJz5oXvvemj5bW80zZfiNwDUwPx4PSK64sPZBjrzObwZjQcqGsyCGFf6t+I4Njt+eAt+n5Op08A8U0eyvO6cvY1QAeqE831nzUeehFK8DyrlQrQk94fFOeG/Xr3h7/4voJrPGx19ab0+fYyNrfbBVpw9o4dEwVmcDqnQdRZXadEEcJSMR2AsV1Gzq7Jpc3BZXJzuLO+cwGc3BtRy8TYKz8wFhV9dC4Tw4bGsYDrNXsBcstZ4plNrTnOtcBLeV+oxIFtowtY2xKp+OAgCJ1ijDH4Ds0JwkNMfX30VzktBcfAPNPHBDxxO655VwH0qmHNeWIOtaC7d+D4zTBOP0+0E5TTAu/x2GlM3ENyoDMagLz27Fg1kP04uvMFFQCwnagjNbMRWq0kYrB+JDGRV0nYpNkjOUKmDHGFpabEDt0baOAleNUYGH9JFRGTBUCRWNwxFdLwnll+LRc+ujLmUq1hI7wYAzFSkfN6RKCC6/dPDnH3tieHYwlWcHUHkyoQ9d0Dr/e5yfH0zg+Q8QeGd0FsMhaO7Q7wLHCBVoY/TXb7/vEHZ0rr6GnoIq1MV6sZQlKzG+vtQNKAtDet9XyWxrcirViknleSROGUhNW4FBaTK5YMo5KG18yo5IasnZA/bWJUcCack1O1jMSW99JCOkkCYSQKMWDAu6poWFS13nOou3KSWhPrXaQbfQbHI/JNpDw8XBOXBxQA6cTuhndGrCvZCnvFEIzL4kuDw4CS6T96v/NQm2ALsc8Mw92GQLUrRSRue9bLHbDglWLKmV1RL8zLS51K2u0/F+C9DbkhRW2Icjyi3VNnxZr3Zdx5xqxAo8RTVB3WHZjfnhPjKvtpNi/M1wSuPPHt7bRmRdbK8OYPZsQi+lGLrW1EXkiHxMd+Tld0fH9TbXDphk1z9ANwiJpdcP9xYUS3PFU8iZxyN0bjxiXOQSwpXOAR83+6J0egwO6XURi1JBR5hLSsJUnFc4iDxplAs6aw0mQSy7IzIsYGKNRwktwOvDkF4k/tE90MTfjG4J+h6jBMzApNeYJ8rtnGIASBOgkk1TtOZoNwTQYKQp4K5HsQfIr8vZ+ciFxW0cpTvEkfJUfPaaUuBNeLadIb15NG+zsq+GV0IEu2msk3YktmNTFKmWK2AUcRp+iEvG3kMNLefJk7d1lppoJEUGGRI4j/lv61hd4rqwBtUIncmTt41gw4tgngLH6UWi/HOgeDrcGL9JkoTvWS/pJEIrrfCiMQb3vkNwnTLDrUkZTTube4dB72ksc1VJZ3ieswEpITZUeH86DJvwH4HsK1p5bcYauDy0apP6qPdSlAf4L8otNcaM4QK64yHMuWQnroNoY4VpurABXrqvEjdmJ194KRXWht2HPEp3jWf2N1BLAwQUAAAACAB8isVciHggTu4IAABSJQAAGAAAAHhsL3dvcmtzaGVldHMvc2hlZXQyLnhtbMVa3W7jNhZ+FcJXGSBjW5J/gyRAEifYYptpO+m06CUt0TYRSdSIVBz3al9j7/osfZR9kj2HlGzZJi2NMYudi4wl8vzwfN/5kezrtchf5YoxRd6TOJU3nZVS2VWvJ8MVS6jsioylsLIQeUIVXObLnsxyRiMtlMQ9v98f9RLK087ttb73c357LQoV85T9nBNZJAnNN/csFuubjtepbnzmy5XSN3q31xldshemvmQgAJe9rZ6IJyyVXKQkZ4ubzp139eQbEb3lN87WsvaZ/ClE8hLSmN10prBve/kJ3Y/NTTzxXIhXFPghuun00XEWs1ChHQr/vbEHFsPuOx/c/Wos+1czP+jsvEPp+ufKjScdKDjHnEr2IOLfeaRWcM5+h0RsQYtY1W5625ufxfofrAzJSJsJRSz1X7I2u/2gO+yQsJBKJJUC8E9t8LTeoEMSnupbCX2vAlsTH3mnxEtpv5T2D6X9YQvpoJQODqW9aaPsoJQdHFkeN8oOS9mhxetJ4PcDz28RuVGpxYS/Z+KvMZ1RRW+vc7EmuZbUKE0qjVvcQKVWBy7gxjtzA9TDIk8xH15UDqsc9KrbH+mcxSSlCbvuKbCHd3thKXtvZIcO2Rlb8JQbvqYR+SJtOh5O67gLQ5YpFpHfaFwwaVEwO63g8Z0mWWyz/Hha8DP7WvAcLIuciAxPQWOLliejZeTQ8kmoQ697ANEWJ9/gNBw04uTrG4HvDjZmKIGqlxGxTlluA8woGfcdSv4QBUnADaNlI4ocPomoCJUkcwbVlRHJ0oinS6Kg8BIlCO5Z0JDHADSThEqyZiQSJBWKiMWC5UaXZPkbD5ns2ihQHi1wePUCZc56nNm5go9G0HMJVtjb8Daiw4lD9NcVk4wsOIsjiAYELK94xFMMGlEM+EgVIytoTxAekcab7gmGBIYhY7+RIUE7hsSY0gihkyVBS5bQKCIUWkgeioghGb4TY7YebllDfqxurblaQTkhdwn9EwpLZTyhG61gXg/4wjjE0zeWKpFvCJdE5TR8hcVCojYKgmkB3qgiZ3mlzUrS4FySniv4GJxPUiM6nGrR1LSKOqkGZXvoN/eHwWlWPbM8XNFUkZd/frFxyYgPpq76TpKaAnLxDH8/IE4AMY8ANg6pBHyBIozJU3KrS35KGcG9GngAHXYyxLzIkGILhF3BVCZ152E0XBF9cgbFCPgI5KRArozmmIgZMALJgL6h5ngDSbl/m4TgT80MkJYDq994VNCYFNDlJLlAasJICXulkYY9ZiLFFlimf9VK9K6PmSEjHgQ6eZGk8kOXPKIRQuOYCJDI9xzR+YLUjdlHlJqLd7h3sTWJ8ncpYXkOEaNZxmguK9MLHjNMCjiKDh1EuTpPgomqAIZa6KxZMDhN5juYV3JdWxZk0icALKQbmJDYRWMmJRpROpo8DeMCMjdmCjdckrRI5rgTEZMZCzkGaaugSy4+ifTjI5ycy1VdM6Y9BEusWdT9YEvABp+fNy+vhecPbCk4OD8FjejYlYFDk4HBqDEBh8Z914T2SwHJw9XGlnzD0yeHXlVGHfFSKyAEV6ZIA9dLgLaNS654Bs85ykaLBkN3ZL0S8daY5gAY85AVS3hMU/bKuacVn9zebr3r3lsdoOH5ABnRiQugUWuARsZN1wj4+J7x3NSACE5qw2l0ukj+UDYyTNqyu+kCyfY1X5p01mDhNQL3/NybzXp/wD9iSlGX1LVFgsn0P//6t6r0WtUCSqaX4kBjtkvol9sGi5pSxmDggbp5CRlN35ihkylqBEYetdlZ1tVnBYUsgXmEw3R+aFJWR6mV8/0qqMcAqLtfi2NhPPe2uAOa9ko2Ok3ZmSuANqKWuoY1og7G4/EhWc02F8o/nXjIMJIjx0SGL0WuJAQIHhR1g8vfWAeyGwDQgyjmWsQljJ0bfJ7BBlfiGa6EkHp0q8pxhf9mS6H60Nr9+68To+q4dcqMT6fM83Yo04hDgcexzJY54+YKlxwpM2XoErqGFOQ1hTkYu2plBuk+pwpGBry6xOAVEuI23+wNi6ZR5UxRaKtwhTE0A8tmNwInMOJjDCOOgy2sGs040aJrO2f0yFMRuhp8QkNq7VQoUsmlKntr1St1V9X9E2zyVGl4zZxRKMnxMIv64KSziC5BizUnGqIJgwWNM5gSChjaeFjr9amojRCjeuO/hNLPMZa1ln/c3ckFe8cHfThmklBpbeNNzt0/fPT6wWTQtzXy8dmpZyTxJdj/OvWOiaqR/6YUnJgUnPYbU3ByOgW/6Jk2w4ci8W7LvMlpOEythzoNY+zcDA8ZHgsHDFOhTw2xl+U0IvXRdzOKmbRBWo/0IGelcYNrZ04jk+NpBLm2V+EnZ9NsclaFP3jX0JZp22cP2xNKO6JNW7+WmJ4m2qctuJoGNqpN/x9UMzsPZl8r3RrcO5Nu02O6jQ/YNj2bbUZy5LmGX/wioOV7SdyKjo4dbtyLd+hR6RLmtYswsVX2+0rFqS5eqijb2T6iJqYV/tCC8KlFLBZIedwd0jzn1ig/NJm+I5mQHL9sIRE0rQS6lsHR+ia6f4yZN+wOD2Art52DWyl6Ajiv9Qzmec3A6W8o3Lh5zbgZDd8dtgbL3wab1w4273zYvCbY/Pbf1/jNsK20sBu3hvfmiFup4rsD12D624DzLcD1u+Mj5PzzkfObkAvaIxe0SLgSudelHbmGl8m/IzDVbGQQ0hqhBbG0jg3JODQ/aJHwiG3FqcHQt+EUHOPk97v+EU7B+Tg1vfH2Bu1xKl8Y1l8NleEvV6aHKw/OlZltZd+zYXvPhk7Phk7PXCsz28q+Z6P2no2cno2cnrlWZraVfc/G7T0bOz0bOz1zrcxsK/ueTXaWJ07LE6dl18rMtrJvebqzPHVanjotu1ZmtpX9L7H7u2+p+y7L1cqxZefKzLayb9nbWfaclj2nZdfKzLZiLPdqP7ZIWL7Uv8LBN51FqvD7/Npd83OgJ//qyfzW5HBhcqXrFqreaTK/M3qm+ZKnEsbeBWiFntYhuSG4/qxEpj9BBs+FAvpXV+ZLZbwCxQsh1PYCrWx/RnX7X1BLAwQUAAAACAB8isVcvDL0hr0CAABKCAAAGAAAAHhsL3dvcmtzaGVldHMvc2hlZXQzLnhtbKVWUW/aMBD+K1aethdCEhpoBUgldNo0obGibtqjCQex6sSZ4zTw73e2kxS6pEMaD2Df5+/uu/PZZloJ+VwkAIocU54VMydRKr9z3SJOIKXFQOSQIbIXMqUKp/LgFrkEujOklLv+cBi6KWWZM58a21rOp6JUnGWwlqQo05TK0wK4qGaO5zSGR3ZIlDG482lOD7AB9ZQjAadu62fHUsgKJjIiYT9z7r27aGIYZsUPBlVxNiY6ma0Qz3ryZTdzhloTcIiVdkHx5wUi4HzmPASo5LdxqodtUM08HzfuP5n8Ud6WFhAJ/pPtVILyhw7ZwZ6WXJ0Zvdb4KKrPUGc6NmFiwQvzTSq72g8HNw6Jy0KJtHGA2tSJA45GDklZZkwpPTb1OqN73jV0v6b7b+lBcA09qOl1pWwOpi5Lquh8KkVFpGHqTP3Jq09bNwNZQ1sOjKIdohpNvbfzEdYTQZbp7tkoiTDDUGq+5oCFxy540fusEiAPR5rmHIiiW7IF7E8gJ1GSWGirQnvCCmI0Tl2ForUfN67DLepwngmX2apoIOoAXEyvzdFvFft2ZdC3MuioQWH6oPEQWMNNT85L20MEj1tORJWB7MrEOgn9HicbbPe3xAuZo3/KHF0nk9MtIHbolzr6T6ldXXUp9cYawrfbuugDog7gImZoe9qbXNnR+phj68XPC2FsjbKwT1kfEHUAF8rGtbLxwL/2uPWJG1t08pe4PiCqgduerfyW6xuX8nc2c2LlB+PrLwuvW/3EoP6oR8sKZJzQTJHN16eurqzpfe39vUQuU6cOalRTwx7qwzFnkpq3Z0fxSvqwWrnLpfsLPx/fqcztO21uF7pnd69+O1dUHlhWEA57XD4c4O5IWzkzViI3I0xxKxQ6bmYJvuMg9Qxvkb0Qqp28Psol3j2SQaZMIjMnF1JJypRtyPbvw/wPUEsDBBQAAAAIAHyKxVxnad31hgUAAAwaAAAYAAAAeGwvd29ya3NoZWV0cy9zaGVldDQueG1srVlbc6s2EP4rjJ9OHxruvmQcz5z47ianpyeTXh4VLNtMAFGQ46S/vkKSjYFdm3bihwT07bdafbu6AMMDy17zHaXceI+jJL/r7DhPb00zD3Y0JvkNS2kikA3LYsLFbbY18zSjZC1JcWQ6ltU1YxImndFQtn3PRkO251GY0O+Zke/jmGQf9zRih7uO3Tk2/Ai3Oy4bzNEwJVv6RPlzKgji1jz5WYcxTfKQJUZGN3edr/btg+1LijT5PaSH/Oza4OTliUY04HQtff/DWPwUkIjedQbW2e23YjiRaiwUeGHstXCwFDSrGIh0UvRLxL83OqaRsP7qivD/VpG4t3/OJv1OGW5BP78+xjWTyomBvZCcjln0R7jmOxGc6HlNN2Qf8bNG+9T4gx0WVGvUk90ELMrlX+OgrJ3ujdAi2OecxUcHIkD+UQzX9jpGHCayKSbvR6XP6LbThu5oulOnu24buqvpbp3u9K+TPU32GqG3IPua7Dd6ttoE3tX0boNuXyf3NLnXCLx3ndzX5H6T3CbwgaYPmuNuUSzWsVosVdqq6GQhTwgno2HGDkYmuUVpOv0yJFXoElINp/oV/Qghu2JeBQX3q24QTIGGSbFSPPFMwKHoi4+m7yROI2qwJPoYmlxEUbSbgaY/aHpP0hMVpwjrFJtz6shRlv0zS+XCueLCBQaVy/QdXbuqARvDRM1iQyyVqcEOCc2AkdwrJ10HcSKWsggkjnXv3frAJhgwxYAZBswxYIEBSwxYAUBFbu+q3F47uSPyQgW2xSX3/q/kHiY5BkwxYIYBcwxYYMASA1YAUJEcmrZVyX3E9T0GjDFgggFTDJhhwBwDFhiwxIAVAFQk6qo1rtxsrqxwxeLOd2Hwes9k21HILiYkBowxYIIBUwyYYcAcAxYYsMSAFQBUhOx9kpA9hTaW83sMGGtgAM/24sh7m6ckEFugWKhzmr3RzujXtDj4kcgAVoGJclicAWoJuNzTyemt8Zyrnc0QR2ojEGfCn0UAr3RtPP3ynANdznSXViODGLDAgCUGrIBhVTLYVxl0e623e9eGc9iXqG8hOj3SLNiRhBdqQMu3ptsI/be94IYcOjaMr1Cn72mYEXnmXxNOjS+Pj+ZkYv4lfj9BlaDcOd3/UlqPJNlvxBPFPiv2qIhxI2BrChXa9HK0sPvnJOS5kVLxrMHeIa+zKxp828cvgs02hQMKVeNce8D2z3vRcUSTLd8ZX4IYEm6hPbgXPMgTK+ZgqR14FxzsZC1iHlbaA3aakCFoD6/bmofKvBic6nqgXCLlMHr8EAVtWTZU0xVq8Rj9NnLcofl2Xrw1m3LdwYAZBswxYIEBSwxYAUBFHtsqz/xWK4EcSKAqVylkOzWF6kalRCgyQ5E5iixQZIkiKwipClUukLZ9TajvYr+QrYVgLiiY3RTMteqCaaPemZHn96xB1W6i7Wynor7r+d1ev2Y7hTq2ax3PwOiqNnPQkXPjV80W7cyW7cxWlwOrJqx8yLSdT0iY0+y559cT5rRK2BRyZvv1JABGfj0JkCOvmQTIzKqnADDq37jW+c+u5+NijNV8uGU+3E/IhwtE25hALpiPQb+eD8CZ05gUgJFXzwdgA+UDMmvkAxrhtXwAHCwfnn5B5CNHfK/Ml/cJ+fKAyBr58qB89Z3G/Kk5O9svMGSOIgsUWaLICkKq8vqlfP41+cbiIUNK54HS+cCi15DOR0KdQvTmig/1US9uyBGw4rcyW7YzW10OTElunr39jGm2lR8DcnFy3ydcvWw8teqvFM7tg3pdXgeKzxcqmaUj9fXjkWTbMMnF2XkjnFo3okYzNV/kNWepvBLhvjAuZtPxbkfJmmbFnZibG8b46ab8rLJPDZaFNOHy6UY8MLCMZyTkKpLTB6DRv1BLAwQUAAAACAB8isVcPiINlokFAAAqSAAADQAAAHhsL3N0eWxlcy54bWzlXN2P4jYQ/1eivO+FfBBIBUh3qEiV2uqk24c+3EsgBiw5H03MFvavr50ECCwTkmBfzF3QisTjmfnNeOyxHbOTjB4I+rZFiGr7kETZVN9SmvxmGNlqi0I/+xQnKGKUdZyGPmWP6cbIkhT5QcaZQmJYg4FrhD6O9Nkk2oWLkGbaKt5FdKqbpyKt+PojYIWuo2uFuHkcoKl+YNf3lzD8/hIEumbMJkYpZjZZx9FZmmXpRQkT6odIe/PJVJ/7BC9TnPOt/RCTQ1Fu5SWrmMSpRpkliKPhRdl7UcEsauRmlrJCHMVpgaBQ007ZshQsQ/PnFPsE0HuSO+gq4QZyHAVoj4KTVLlKhq0sCf33ONJ+D5cobd/ulkTZpi1EdrpZTvXFYj7gVxsFTb3/FH4W5tTbpotpqn7CQLRvd8VThqMNQQ+Kxu293WJYlTd6ixmdO/asjpHTMR5O2pwqW/7Fcy4m5JRzh3pRMJskPqUojRbsoWDKSz/SyvvXQ8L6xSb1D6Y11JtzZDHBAVe6mV+mCKuMhutytzSiIrGrrrIzM2dSzI1/GXwyHc/zxs7IGYycoeXKx1B2+i/5p722/Is14jJOA5Sep06OfiybTQhaUy4gxZttfkPjJFcUUxqH/C7A/iaO/KKhj2y32fP541Sn23z+t7qNNK/6mJ4PMEvFIQrwLoRVF7WbqGookNe9Mv4eS8X8hhysqoqGNm5lhcysx/yrGvmcIdvcTEMd7J2HShXAlwKDeLdkM8M2EXaP5aOh9Y65YWY9g3ojRd8GqtmK91QolsFbTmA6YFJx7FIR01OnMuWmmW2iWd5I+WF+/zRj/IMLm75TxKOzlL5zW+up4Y9uL7nLamFwypuMCUGEfONi/1mf9xGY8P268jJnwF/lRKdbTEh5W4gpHwyYy6rlMqogCkgVNCOzG5wEv8X0y475Icqf/93FFH1N0Rrv8+f9+j7uGvF+kpDDZ4I3UYiKt2CNNc4m/pFP+y/1k1e0p8etT2O/huGMznBsCda6csWbZ/FOVbzpypffR2uBeCxheLZxit+ZOr7Py4cWXXtDKcUr/rxiFfhWcCvMUMCb4iK+CWYlYd4D5cgAZd4B9Yytqz7mdv28JruJGNfsp40rUYnDBBJTr93dlD85qIJqOjTWwRLSGJB8OVmti9mXMWKLt/tSgSNbwVCQAke2BaACURaYQOw5wmLvwWwFIhwqg3D4tAjFzeNlIRwrj3CkPEJbGYTyE/yDCMd9zAzbr9ag+bE6E1jTrYHYOXPl+fB5fDCS4YOmCtToUCBE2S4Q54FW9npyd/yG/Yhv4bmG26GS2qrLQqcGlQijLRlJzxTZR63KFNuqIvRUQWh6gA/VR8jXL4pA7GVyI8aL6ixHIYTqLPYghOos9iCE6iz2IITqLPYghOos9iCEDy0AXEeyhqoFP9PLnZHc9/dP6ZOx5A38Xt+mgKA8uZFgiep9lbd014uR3pwq+bwI2GZy119yPKrK+qvfLT0aJ8BwZZTHsipHxi4OjJ1KNf6bxKn+N//tP6kYvdxhQnF0dsFtDs06o748HMZUU39J0KVuJitAa39H6OuJONXP93/lp2OtU62v3GNlrfP9n/yQHd8FNMpzdUxZebJuXj6mm2Xlx3uD8so5rkmL/AJIIFdBBEicCOoCYYBcBR+o62e0awzbVRBBhOPbpDHMNYa5Cr6bpHn+AXUBXB67AJM9z7ZdF3TvfH4bxhz0oevyP0AgiJDzgLq4traerwmAmrC5ExtgK9eGDWhyTYiCJtd4npMAH3IezwMCANTFecBGASOKgwB08VADuGybtzOIEOzmNSTPA0k8SIHodV3IUS7/AO0FdiLb9jyAxIkADNsGSbzD1pBAGBwISLLLfzdwlc+MY54zzv8daPY/UEsDBBQAAAAIAHyKxVy3R+uKwAAAABYCAAALAAAAX3JlbHMvLnJlbHOdkktuAjEMQK8SZV9MqcQCMazYsEOIC7iJ56OZxJFjxPT2jdjAIGgRS/+eni2vDzSgdhxz26VsxjDEXNlWNa0AsmspYJ5xolgqNUtALaE0kND12BAs5vMlyC3Dbta3THP8SfQKkeu6c7RldwoU9QH4rsOaI0pDWtlxgDNL/83czwrUmp2vrOz8pzXwpszz9SCQokdFcCz0kaRMi3aUrz6e3b6k86VjYrR43+j/89CoFD35v50wpYnS10UJJm+w+QVQSwMEFAAAAAgAfIrFXCp/7u+RAQAASQMAAA8AAAB4bC93b3JrYm9vay54bWyNks1u2zAMx19F0APMiZP2EMS5tFgboNiGdWjPikXHRPVhSHSd9rR32BvuSUbJcGusQNCT+AH9SP7J7eDD08H7J3GyxsVNqGRL1G2KItYtWBW/+A4c5xofrCJ2w7HwTYM1XPu6t+CoKBeLyyKAUYTexRa7KEfaZ1ixC6B0bAHImhFlFTq5206d/Qii2G2T9YAwxPdEcsUzRjygQXqpZLYNSGHRocVX0JVcSBFbP9z6gK/ekTL3dfDGVHI5Jh4gENYfwvepoV/qEHPk9IhO+yHTXib7YsHekJ1H1NRWslwvy7fYLeCxJf6+vEhBUoefSaBKXqZ/DYZIuUiGqprwGbheJVfs9eS/oiEI14rgJvi+Q3fMnbASxUyKrNv0CqcsVHLvIoW+zstIw3Bmr8fBiHEzmcIGORH2egTPIVxYCQ0NC/k/qDwDKj+Arni9BCLtrDF+EH9//xEEtuNrgRl0dQa6+hQUToqpc+b6DHM9SjnplycF/Y3pMSX4IGq+u/TsxyNqemOu2P3u7rzSb7uYbnH3D1BLAwQUAAAACAB8isVcScoLbsIAAACxAwAAGgAAAHhsL19yZWxzL3dvcmtib29rLnhtbC5yZWxzzZM5DoMwEEWvYvkATFhCEQFVGtooF7BgWMRiyzNRwu2DSAGWUqRBobL+WH7/FePkhr3iVo/UtIbEa+hHSmXDbC4AVDQ4KPK0wXG+qbQdFM/R1mBU0akaITidYrBbhsySLVPcJ4O/EHVVtQVedfEYcOQvYHhq21GDyFLcla2RUwmvfh0TLIfvzWQp8jKVNi99KeDfRoFjFBzAKHSMwgMYRY5RtKcR8dQjrTqf7PSf9+zn+S2u9Uv8DN3VjRcJcH5o9gZQSwMEFAAAAAgAfIrFXNOTv+QoAQAAcgUAABMAAABbQ29udGVudF9UeXBlc10ueG1szVTLTsMwEPyVKNcqcSmIA2p6Aa7QAz9gkk1j1S95tyX9ezYOjQQqLVUq0Yste2dnxjuS5287D5i0Rlss0obIPwiBZQNGYu48WK7ULhhJfAwr4WW5lisQs+n0XpTOEljKqONIF/MnqOVGU/Lc8jUqZ4s0gMY0eeyBnVaRSu+1KiVxXWxt9UMl+1LIuTNisFEeJwxIE3FQIpZ+Vdg3vm4hBFVBspSBXqRhmGi1QNppwPw4xwGXrq5VCZUrN4ZbcvQBZIUNABmd96STE9LEQ4Z+vRltINIcVWToMjiPnFqA8/X2sXTdmWciCKROPHKQZO7RL4Qu8Qqqv4rzhD9cWMdMUMRt/Ji/5zzwn2tkdi1Gbq/FyN1/Gnl3bn3pL6DbcyOVHQyI+NUuPgFQSwECFAMUAAAACAB8isVcRsdNSJUAAADNAAAAEAAAAAAAAAAAAAAAgAEAAAAAZG9jUHJvcHMvYXBwLnhtbFBLAQIUAxQAAAAIAHyKxVzZeSfXFAEAAAUCAAARAAAAAAAAAAAAAACAAcMAAABkb2NQcm9wcy9jb3JlLnhtbFBLAQIUAxQAAAAIAHyKxVzBFxC+kgYAAMYgAAATAAAAAAAAAAAAAACAAQYCAAB4bC90aGVtZS90aGVtZTEueG1sUEsBAhQDFAAAAAgAfIrFXNKO2snEBAAAawwAABgAAAAAAAAAAAAAAICByQgAAHhsL3dvcmtzaGVldHMvc2hlZXQxLnhtbFBLAQIUAxQAAAAIAHyKxVyIeCBO7ggAAFIlAAAYAAAAAAAAAAAAAACAgcMNAAB4bC93b3Jrc2hlZXRzL3NoZWV0Mi54bWxQSwECFAMUAAAACAB8isVcvDL0hr0CAABKCAAAGAAAAAAAAAAAAAAAgIHnFgAAeGwvd29ya3NoZWV0cy9zaGVldDMueG1sUEsBAhQDFAAAAAgAfIrFXGdp3fWGBQAADBoAABgAAAAAAAAAAAAAAICB2hkAAHhsL3dvcmtzaGVldHMvc2hlZXQ0LnhtbFBLAQIUAxQAAAAIAHyKxVw+Ig2WiQUAACpIAAANAAAAAAAAAAAAAACAAZYfAAB4bC9zdHlsZXMueG1sUEsBAhQDFAAAAAgAfIrFXLdH64rAAAAAFgIAAAsAAAAAAAAAAAAAAIABSiUAAF9yZWxzLy5yZWxzUEsBAhQDFAAAAAgAfIrFXCp/7u+RAQAASQMAAA8AAAAAAAAAAAAAAIABMyYAAHhsL3dvcmtib29rLnhtbFBLAQIUAxQAAAAIAHyKxVxJygtuwgAAALEDAAAaAAAAAAAAAAAAAACAAfEnAAB4bC9fcmVscy93b3JrYm9vay54bWwucmVsc1BLAQIUAxQAAAAIAHyKxVzTk7/kKAEAAHIFAAATAAAAAAAAAAAAAACAAesoAABbQ29udGVudF9UeXBlc10ueG1sUEsFBgAAAAAMAAwAEAMAAEQqAAAAAA==';
+  async function saveFile(wb, fn) {
+    const dl = window.claude && window.claude.use ? await window.claude.use('downloads').catch(() => null) : null;
+    if (dl) {
+      try { await dl.save({filename: fn, data: XLSX.write(wb, {type:'array', bookType:'xlsx'})}); say('Saved ' + fn, 'ok'); }
+      catch(e) { if (e && e.code !== 'declined') say('Export not available here: ' + (e.message || e.code), 'bad'); }
+    } else XLSX.writeFile(wb, fn);
+  }
+  $('#expAll').onchange = () => { expAll = $('#expAll').value; store(); $('#expAll').blur(); lock(); };
+  $('#manifest').onclick = async () => {
+    if (!rows.length || map.sku < 0) return;
+    const usDate = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
+    const exp = usDate(expAll) || null;   // no date → cell left empty
+    const missing = rows.filter((r, i) => counts[i] < need(i)).length;
+    const wb = XLSX.read(MANIFEST_B64, {type: 'base64'});
+    const sheet = wb.SheetNames.find(n => /workflow.*template/i.test(n)), ws = wb.Sheets[sheet];
+    let lines = [], skus = new Set(), tooMany = [];
+    if (AMZ) {
+      // packed in boxes: one packing line per SKU per box (Orlando's rule):
+      // Merchant SKU | Quantity = units in that box | Expiry | Lot code (empty) | Units per box | Number of boxes = 1 | L | W | H | kg
+      // headers as on Amazon's example sheet (case-packed SKU columns)
+      XLSX.utils.sheet_add_aoa(ws, [[null, null, 'Optional', null, 'Optional: Use only for case-packed SKUs']], {origin: 'A7'});
+      XLSX.utils.sheet_add_aoa(ws, [['Merchant SKU', 'Quantity', 'Expiration date (MM/DD/YYYY)', 'Manufacturing lot code ', 'Units per box ',
+        'Number of boxes', 'Box length (cm)', 'Box width (cm)', 'Box height (cm)', 'Box weight (kg)']], {origin: 'A8'});
+      const perSku = {};
+      rows.forEach((r, i) => {
+        const sku = String(r[map.sku] || '').trim();
+        if (!sku) return;
+        Object.keys(boxes[i] || {}).map(Number).sort((a, b) => a - b).forEach(b => {
+          const n = boxes[i][b]; if (!n) return;
+          lines.push([sku, n, exp, null, n, 1, dims.l, dims.w, dims.h, dims.kg]);
+          skus.add(sku); perSku[sku] = (perSku[sku] || 0) + 1;
+        });
+      });
+      tooMany = Object.keys(perSku).filter(k => perSku[k] > 4);   // Amazon allows one SKU on max. 4 packing lines
+    } else {
+      // one line per SKU with the scanned quantity (same SKU on two lines is added together)
+      const bySku = new Map();
+      rows.forEach((r, i) => {
+        const sku = String(r[map.sku] || '').trim();
+        if (!sku || !counts[i]) return;
+        bySku.set(sku, [sku, (bySku.get(sku)?.[1] || 0) + counts[i], exp]);
+      });
+      lines = [...bySku.values()]; lines.forEach(l => skus.add(l[0]));
+    }
+    if (!lines.length) { say('Nothing packed yet — scan the products first, then make the manifest.', 'bad'); beep(false); return; }
+    XLSX.utils.sheet_add_aoa(ws, lines, {origin: 'A9'});
+    wb.Workbook = wb.Workbook || {}; wb.Workbook.Views = [{activeTab: wb.SheetNames.indexOf(sheet)}];
+    await saveFile(wb, `ManifestFileUpload_${orderId()}.xlsx`);
+    const units = lines.reduce((s, v) => s + v[1], 0);
+    say(`Amazon manifest: ${skus.size} SKUs, ${lines.length} packing lines, ${units} units`
+      + (missing ? ` — ${missing} product(s) not fully packed, only packed units are in the file` : '')
+      + (tooMany.length ? ` — ⚠ in more than 4 boxes (Amazon max): ${tooMany.join(', ')}` : ''), missing || tooMany.length ? 'part' : 'ok');
+    lock();
+  };
 
   // ---------- export ----------
   $('#export').onclick = async () => {
