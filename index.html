@@ -85,11 +85,38 @@
   .camtools{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   #confirmReset{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--bad-ink);font-weight:600}
   .note{color:var(--mute);font-size:13px}
+  /* the scanned row scrolls into view just below the sticky header (height measured in script) */
+  tbody tr{scroll-margin-top:calc(var(--hh, 0px) + 8px);scroll-margin-bottom:12px}
+  header{grid-template-columns:minmax(0,1fr)} header>*{min-width:0}
+  .eansub{display:none;font:500 12px var(--mono);color:var(--mute);margin-top:2px}
+  @media (max-width:700px){ .eancol{display:none} .eansub{display:block} }
   @media (max-width:700px){
     .extra{display:none}
-    #scan{font-size:22px}
-    #msg{font-size:18px}
-    .tools{margin-left:0}
+    header{gap:5px;padding-block:6px}
+    .top{flex-wrap:nowrap;gap:8px}
+    h1{font-size:14px;white-space:nowrap}
+    h1 small{display:none}
+    /* buttons on one line that swipes sideways instead of stacking 2-3 rows */
+    .tools{margin-left:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;min-width:0}
+    .tools::-webkit-scrollbar{display:none}
+    .tools button,.tools label.btn{padding:6px 10px;font-size:13px;white-space:nowrap;flex:none}
+    .scanrow{flex-wrap:nowrap;gap:6px}
+    .scanbox{flex:1 1 auto}
+    #scan{font-size:18px;padding:7px 10px;border-width:2px}
+    #ready{padding:0 8px;font-size:12px}
+    #ready #readytxt{display:none}
+    #msg{font-size:15px;min-height:20px}
+    .stats{font-size:13px;gap:10px}
+    .bar{height:5px}
+    /* camera: a short strip instead of a full-height picture */
+    #cam{max-width:none}
+    #cam video{height:26vh!important;object-fit:cover}
+    #camguide{height:55%}
+    #camnote{display:none}
+    .camtools{gap:6px}
+    td{padding:6px 7px}
+    td.cnt b{font-size:15px;min-width:48px}
+    .mini{padding:4px 10px}
   }
   @media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
 </style>
@@ -189,6 +216,12 @@
     scan.classList.add(cls === 'bad' ? 'flash-bad' : 'flash-ok');
     setTimeout(() => scan.classList.remove('flash-ok','flash-bad'), 600);
   };
+
+  // keep --hh = sticky header height, so scrolled-to rows land just below it
+  const hdr = document.querySelector('header');
+  const setHH = () => document.documentElement.style.setProperty('--hh', hdr.offsetHeight + 'px');
+  try { new ResizeObserver(setHH).observe(hdr); } catch(e) { window.addEventListener('resize', setHH); }
+  setHH();
 
   // ---------- cursor lock: the scan box always has focus ----------
   // Only the filter box and the column dropdowns may take focus away (while you use them).
@@ -522,7 +555,7 @@
     const key = [map.name, map.ean].filter(c => c >= 0);
     const rest = headers.map((_, i) => i).filter(c => !key.includes(c) && c !== map.qty
       && rows.some(r => r[c] !== '' && r[c] !== null));
-    let html = '<table><thead><tr><th>Scanned</th>' + key.map(c => `<th>${esc(headers[c])}</th>`).join('')
+    let html = '<table><thead><tr><th>Scanned</th>' + key.map(c => `<th${c === map.ean ? ' class="eancol"' : ''}>${esc(headers[c])}</th>`).join('')
       + rest.map(c => `<th class="extra">${esc(headers[c])}</th>`).join('') + '</tr></thead><tbody>';
     rows.forEach((r, i) => {
       const st = status(i);
@@ -532,7 +565,8 @@
       if (q && !r.map(showEan).join(' ').toLowerCase().includes(q)) return;
       html += `<tr id="r${i}" class="${st === 'todo' ? '' : st}${i === lastIdx ? ' last' : ''}">
         <td class="cnt"><button class="mini" data-m="${i}" aria-label="minus one">−</button><b>${counts[i]} / ${need(i)}</b><button class="mini" data-p="${i}" aria-label="plus one">+</button></td>`
-        + key.map(c => c === map.ean ? `<td class="ean">${esc(showEan(r[c]))}</td>` : `<td>${esc(r[c])}</td>`).join('')
+        + key.map(c => c === map.ean ? `<td class="ean eancol">${esc(showEan(r[c]))}</td>`
+            : `<td>${esc(r[c])}${c === map.name && map.ean >= 0 ? `<span class="eansub">${esc(showEan(r[map.ean]))}</span>` : ''}</td>`).join('')
         + rest.map(c => `<td class="extra${typeof r[c] === 'number' ? ' num' : ''}">${esc(r[c])}</td>`).join('') + '</tr>';
     });
     html += '</tbody></table>';
@@ -543,7 +577,14 @@
 
     const u = Object.entries(unknown);
     $('#unknown').innerHTML = u.length ? 'Scanned but not in this order: ' + u.map(([k,v]) => `<span style="font-family:var(--mono)">${esc(k)}</span> ×${v}`).join(', ') : '';
-    if (scrollToLast && lastIdx >= 0) { const el = document.getElementById('r' + lastIdx); el && el.scrollIntoView({block:'center'}); }
+    if (scrollToLast && lastIdx >= 0) {
+      const el = document.getElementById('r' + lastIdx);
+      // only scroll when the row is hidden under the header or below the screen
+      if (el) {
+        const r = el.getBoundingClientRect(), top = document.querySelector('header').getBoundingClientRect().bottom;
+        if (r.top < top || r.bottom > window.innerHeight) el.scrollIntoView({block: 'nearest'});
+      }
+    }
   }
 
   // ---------- export ----------
