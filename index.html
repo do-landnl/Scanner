@@ -107,6 +107,8 @@
   .bvhead{display:flex;gap:10px;align-items:baseline;font-size:18px}
   table.bvt{width:100%;border-collapse:collapse} table.bvt td{padding:5px 6px;border-bottom:1px solid var(--line)}
   table.bvt td.cnt b{font-size:17px;display:inline-block;min-width:40px;text-align:center}
+  .bvqty{font:700 17px var(--mono);width:3.6em;text-align:center;padding:3px 4px;margin:0 4px;border:2px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
+  .bvqty:focus{border-color:var(--accent);outline:none}
   #planhead{margin:6px 0 0;font-size:15px;color:var(--mute)}
   .bvhead button{margin-left:auto}
   #boxview.locked{border-color:var(--ok-ink);background:var(--ok)}
@@ -343,8 +345,9 @@
 
   // ---------- cursor lock: the scan box always has focus ----------
   // Only the filter box and the column dropdowns may take focus away (while you use them).
-  const mayHoldFocus = el => el && (el.id === 'search' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA'
-    || el.classList.contains('expin') || !!(el.closest && el.closest('#addbox')));
+  // fields where the user types: the cursor lock and the "digits go to the scan box" rule leave these alone
+  const mayHoldFocus = el => el && (el.id === 'search' || el.id === 'boxqty' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA'
+    || el.classList.contains('expin') || el.classList.contains('bvqty') || !!(el.closest && el.closest('#addbox, #qtyask, #boxview')));
   const lock = () => {
     if (camOn || picking || !$('#sharebox').hidden) return;   // camera, photo or share window open: leave focus alone
     if (typeof pending !== 'undefined' && pending) { if (document.activeElement !== $('#boxqty')) $('#boxqty').focus(); return; }
@@ -1189,7 +1192,7 @@
       ${locked ? '<button id="reopenbox">Reopen box</button>' : `<button id="completebox" class="primary">✓ Complete Box ${curBox}</button>`}</div>`;
     if (!items.length) h += `<p class="note">Box ${curBox} is empty — scan the first product that goes into this box.</p>`;
     else h += '<table class="bvt"><tbody>' + items.map(([i, n]) =>
-      `<tr${i === lastIdx ? ' class="last"' : ''}><td class="cnt">${locked ? `<b>${n}</b>` : `<button class="mini" data-bm="${i}" aria-label="one less in this box">−</button><b>${n}</b><button class="mini" data-bp="${i}" aria-label="one more in this box">+</button>`}</td>
+      `<tr${i === lastIdx ? ' class="last"' : ''}><td class="cnt">${locked ? `<b>${n}</b>` : `<button class="mini" data-bm="${i}" aria-label="one less in this box">−</button><input class="bvqty" id="bvq${i}" type="text" inputmode="numeric" value="${n}" data-bq="${i}" aria-label="units of this product in Box ${curBox}"><button class="mini" data-bp="${i}" aria-label="one more in this box">+</button>`}</td>
        <td>${esc(label(i))}<span class="subinfo">${esc(map.fnsku >= 0 ? rows[i][map.fnsku] || '' : '')}</span></td>
        <td>${locked ? '' : `<button class="mini" data-bx="${i}" title="Take this product out of Box ${curBox}">✕</button>`}</td></tr>`).join('') + '</tbody></table>';
     v.innerHTML = h; v.hidden = false;
@@ -1199,6 +1202,23 @@
     v.querySelectorAll('[data-bp]').forEach(b => b.onclick = () => { const i = +b.dataset.bp; setBox(i, curBox, (boxes[i][curBox] || 0) + 1); render(); });
     v.querySelectorAll('[data-bm]').forEach(b => b.onclick = () => { const i = +b.dataset.bm; setBox(i, curBox, (boxes[i][curBox] || 0) - 1); render(); });
     v.querySelectorAll('[data-bx]').forEach(b => b.onclick = () => { const i = +b.dataset.bx; setBox(i, curBox, 0); render(); say(`${label(i)} taken out of Box ${curBox}`, 'part'); });
+    // type a new quantity for this box: Enter (or leaving the field) saves it, Esc cancels
+    v.querySelectorAll('.bvqty').forEach(inp => {
+      inp.addEventListener('focus', () => inp.select());
+      const save = () => {
+        const i = +inp.dataset.bq, old = (boxes[i] || {})[curBox] || 0, n = Math.round(toNum(inp.value));
+        if (inp.value.trim() === '' || !(n >= 0) || n === old) { inp.value = old; return false; }
+        setBox(i, curBox, n);
+        const over = counts[i] > need(i);
+        say(`${over ? '⚠' : '✓'} Box ${curBox}: ${label(i)} set to ${n}${over ? ` — more than planned (${counts[i]} / ${need(i)})` : ''}`, over ? 'bad' : 'ok');
+        return true;
+      };
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); render(); scan.focus(); }
+        else if (e.key === 'Escape') { e.preventDefault(); inp.value = (boxes[+inp.dataset.bq] || {})[curBox] || 0; inp.blur(); scan.focus(); }
+      });
+      inp.addEventListener('change', () => { if (save()) render(); });
+    });
   }
   function amzEditQty(i) {
     const v = prompt(`Labels printed / units to send for:\n${label(i)}`, need(i));
