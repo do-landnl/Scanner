@@ -994,6 +994,12 @@
   const META_KEY = 'qps-catalog-meta';
   let catMeta = {};
   try { catMeta = JSON.parse(localStorage.getItem(META_KEY) || '{}'); } catch(e) { catMeta = {}; }
+  // the morning task loads the product list in its own tab: pick it up here too, without a reload
+  window.addEventListener('storage', e => {
+    if (e.key !== CAT_KEY && e.key !== META_KEY) return;
+    try { catalog = JSON.parse(localStorage.getItem(CAT_KEY) || '[]'); catMeta = JSON.parse(localStorage.getItem(META_KEY) || '{}'); } catch(err) {}
+    catCount();
+  });
   const fmtDate = d => d.toLocaleString('en-GB', {weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'});
   const catCount = () => {
     const el = document.getElementById('catcount'); if (!el) return;
