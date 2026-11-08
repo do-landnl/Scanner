@@ -127,6 +127,7 @@
   .pbox{font:600 11px var(--sans);padding:1px 6px;border-radius:10px;background:var(--head);color:var(--mute)}
   .pbox.cur{background:var(--accent);color:var(--card)}
   .rowtools{margin-left:6px;opacity:.75}
+  .packinfo{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-top:10px;padding:8px 10px;border:1px dashed var(--accent);border-radius:8px}
   .addto{display:block;margin-top:5px;padding:3px 10px;font-size:13px;font-weight:600;background:var(--accent);color:#fff;border:0;border-radius:6px;cursor:pointer;white-space:nowrap}
   .dim{width:4.2em}
   .catstate{font-weight:700;padding:2px 8px;border-radius:8px}
@@ -304,10 +305,12 @@
   let doneBoxes = {};                        // {boxNumber: true} once a box is completed (closed)
   const DIM_DEFAULT = {l: 60, w: 40, h: 30, kg: 15};   // Orlando's standard carton
   let dims = {...DIM_DEFAULT};
+  let boxDims = {};   // {boxNumber: {l,w,h,kg}} real size/weight per box (default = dims) for Seller Central "Packing information"
+  const bd = b => ({...dims, ...(boxDims[b] || {})});
   const store = () => {
     if (!fileName) return;
     const s = {counts, history, unknown, expAll};
-    if (AMZ) Object.assign(s, {kind: 'fba', boxes, curBox, nBoxes, doneBoxes, dims, headers, rows, savedAt: Date.now()});
+    if (AMZ) Object.assign(s, {kind: 'fba', boxes, curBox, nBoxes, doneBoxes, dims, boxDims, headers, rows, savedAt: Date.now()});
     try { localStorage.setItem('qps:' + fileName, JSON.stringify(s)); if (AMZ) localStorage.setItem('qps-last-fba', fileName); } catch(e){}
   };
   const load  = () => { try { return JSON.parse(localStorage.getItem('qps:' + fileName) || 'null'); } catch(e){ return null; } };
@@ -658,12 +661,12 @@
     if (saved && saved.counts && saved.counts.length === rows.length) {
       counts = saved.counts; history = saved.history || []; unknown = saved.unknown || {}; expAll = saved.expAll || EXP_DEFAULT;
       boxes = saved.boxes && saved.boxes.length === rows.length ? saved.boxes : rows.map(() => ({}));
-      curBox = saved.curBox ?? 1; nBoxes = saved.nBoxes ?? 1; doneBoxes = saved.doneBoxes || {}; dims = {...DIM_DEFAULT, ...(saved.dims || {})};
+      curBox = saved.curBox ?? 1; nBoxes = saved.nBoxes ?? 1; doneBoxes = saved.doneBoxes || {}; dims = {...DIM_DEFAULT, ...(saved.dims || {})}; boxDims = saved.boxDims || {};
       say('Resumed your scans for ' + name, 'ok');
     } else {
       counts = rows.map(() => 0); history = []; unknown = {}; expAll = EXP_DEFAULT;
       // Amazon: a new shipment starts in setup (no box open); Qogita keeps one implicit "box"
-      boxes = rows.map(() => ({})); curBox = AMZ ? 0 : 1; nBoxes = AMZ ? 0 : 1; doneBoxes = {}; dims = {...DIM_DEFAULT};
+      boxes = rows.map(() => ({})); curBox = AMZ ? 0 : 1; nBoxes = AMZ ? 0 : 1; doneBoxes = {}; dims = {...DIM_DEFAULT}; boxDims = {};
       say(rows.length + (AMZ ? ' products loaded — check the plan, then click "New box" to start packing' : ' lines loaded — start scanning'), 'ok');
     }
     lastIdx = -1;
@@ -1209,7 +1212,24 @@
       `<tr${i === lastIdx ? ' class="last"' : ''}><td class="cnt">${locked ? `<b>${n}</b>` : `<button class="mini" data-bm="${i}" aria-label="one less in this box">−</button><input class="bvqty" id="bvq${i}" type="text" inputmode="numeric" value="${n}" data-bq="${i}" aria-label="units of this product in Box ${curBox}"><button class="mini" data-bp="${i}" aria-label="one more in this box">+</button>`}</td>
        <td>${esc(label(i))}<span class="subinfo">${esc(map.fnsku >= 0 ? rows[i][map.fnsku] || '' : '')}</span></td>
        <td>${locked ? '' : `<button class="mini" data-bx="${i}" title="Take this product out of Box ${curBox}">✕</button>`}</td></tr>`).join('') + '</tbody></table>';
+    // Seller Central asks this for every box ("Packing information for 1 box"); Amazon's manifest file has no place for it
+    // when a box holds several products, so it is kept here per box — weigh the box and type the real values
+    if (items.length) {
+      const d = bd(curBox), f = (k, w) => `<input class="bvdim" data-k="${k}" type="text" inputmode="decimal" value="${d[k]}" style="width:${w}em;text-align:center" aria-label="${k}">`;
+      h += `<div class="packinfo"><b>Packing information for Seller Central</b>
+        <span>Box dimensions (cm): ${f('l', 3.2)} × ${f('w', 3.2)} × ${f('h', 3.2)}</span>
+        <span>Box weight (kg): ${f('kg', 3.6)}</span>
+        <button id="copypack" class="mini" title="Copy size and weight">Copy</button></div>`;
+    }
     v.innerHTML = h; v.hidden = false;
+    v.querySelectorAll('.bvdim').forEach(inp => {
+      const save = () => { const x = toNum(inp.value), k = inp.dataset.k;
+        if (x > 0) { boxDims[curBox] = {...bd(curBox), [k]: x}; store(); } else inp.value = bd(curBox)[k]; };
+      inp.onchange = save;
+      inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); save(); inp.blur(); scan.focus(); } };
+    });
+    if ($('#copypack')) $('#copypack').onclick = () => { const d = bd(curBox), t = `${d.l} x ${d.w} x ${d.h} cm, ${d.kg} kg`;
+      (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => say('Copied: ' + t, 'ok'), () => say(t, 'ok')); lock(); };
     v.classList.toggle('locked', locked);
     if ($('#completebox')) $('#completebox').onclick = completeBox;
     if ($('#reopenbox')) $('#reopenbox').onclick = reopenBox;
@@ -1276,7 +1296,7 @@
   }
   function amzStartEmpty(name) {
     headers = AMZ_HEADERS.slice(); rows = []; counts = []; boxes = []; history = []; unknown = {};
-    curBox = 0; nBoxes = 0; doneBoxes = {}; expAll = EXP_DEFAULT; dims = {...DIM_DEFAULT}; lastIdx = -1; fileName = name;
+    curBox = 0; nBoxes = 0; doneBoxes = {}; expAll = EXP_DEFAULT; dims = {...DIM_DEFAULT}; boxDims = {}; lastIdx = -1; fileName = name;
     autoMap(); $('#expAll').value = expAll;
     drop.hidden = true; $('#filters').hidden = true; $('#mapbox').hidden = true;
     amzRefresh(); render();
@@ -1483,7 +1503,8 @@
         const single = new Set(its.map(skuOk)).size === 1;
         its.forEach(i => {
           const sku = skuOk(i), n = boxes[i][b]; skus.add(sku);
-          if (single) { lines.push([sku, n, exp, null, n, 1, dims.l, dims.w, dims.h, dims.kg]); perSku[sku] = (perSku[sku] || 0) + 1; }
+          const D = bd(b);
+          if (single) { lines.push([sku, n, exp, null, n, 1, D.l, D.w, D.h, D.kg]); perSku[sku] = (perSku[sku] || 0) + 1; }
           else indiv.set(sku, (indiv.get(sku) || 0) + n);
         });
         if (!single && its.length) mixedBoxes.push(b);
@@ -1513,7 +1534,7 @@
       + (noSku.length ? ` — ⚠ left out, no SKU yet (paste their details): ${noSku.map(label).join(', ')}` : '')
       + (tooMany.length ? ` — ⚠ in more than 4 boxes (Amazon max): ${tooMany.join(', ')}` : '')
       + (mixedBoxes.length ? (mixedBoxes.length === 1 && (onlyBox || nBoxes === 1)
-          ? `. Mixed box: in Seller Central choose "Everything will fit into one box" and enter ${dims.l}×${dims.w}×${dims.h} cm, ${dims.kg} kg.`
+          ? `. Mixed box: in Seller Central choose "Everything will fit into one box" and enter ${bd(mixedBoxes[0]).l} × ${bd(mixedBoxes[0]).w} × ${bd(mixedBoxes[0]).h} cm, ${bd(mixedBoxes[0]).kg} kg (shown under the box).`
           : `. Mixed box${mixedBoxes.length === 1 ? '' : 'es'} ${mixedBoxes.join(', ')}: in Seller Central choose "Multiple boxes will be needed" and enter what is in each box (use "Box contents" export).`) : ''),
       (!onlyBox && missing) || tooMany.length || noSku.length ? 'part' : 'ok');
     lock();
