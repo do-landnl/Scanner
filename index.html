@@ -78,8 +78,11 @@
   tr.last td{box-shadow:inset 0 3px 0 var(--accent),inset 0 -3px 0 var(--accent)}
   #unknown{color:var(--bad-ink);font-weight:500}
   #campanel{display:grid;gap:6px}
-  #cam{width:100%;max-width:480px;border-radius:10px;overflow:hidden;background:#000}
+  #cam{width:100%;max-width:520px;border-radius:10px;overflow:hidden;background:#000;position:relative}
   #cam video{width:100%!important;display:block}
+  #camguide{position:absolute;left:8%;right:8%;top:50%;height:34%;transform:translateY(-50%);border:3px solid rgba(255,255,255,.85);border-radius:8px;pointer-events:none;box-shadow:0 0 0 2000px rgba(0,0,0,.25)}
+  #camguide::after{content:"";position:absolute;left:4%;right:4%;top:50%;border-top:2px solid #ff4d4d}
+  .camtools{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   #confirmReset{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--bad-ink);font-weight:600}
   .note{color:var(--mute);font-size:13px}
   @media (max-width:700px){
@@ -109,7 +112,11 @@
   </div>
   <div id="campanel" hidden>
     <div id="cam"></div>
-    <div class="note" id="camnote">Hold the barcode inside the box. One beep = one unit. Move the product away before scanning the next unit of the same item.</div>
+    <div class="camtools">
+      <button id="torch" class="mini" hidden>Light</button>
+      <button id="flipcam" class="mini">Switch camera</button>
+      <span class="note" id="camnote">Hold the barcode flat and horizontal along the red line, 10–20 cm away. One beep = one unit. Move the product away before the next unit of the same item.</span>
+    </div>
   </div>
   <div id="confirmReset" hidden>Clear all scans for this order? <button id="yesReset">Yes, clear</button><button id="noReset">Cancel</button></div>
   <div id="msg"></div>
@@ -210,40 +217,119 @@
   };
 
   // ---------- camera scanning (phone / tablet / webcam) ----------
-  let cam = null, camOn = false, lastCode = '', lastAt = 0;
+  // Two engines: the phone's built-in barcode reader (Android Chrome — fast and accurate),
+  // otherwise the ZXing reader inside html5-qrcode (iPhone/iPad Safari, some PCs). Both get an HD feed + autofocus.
+  let camOn = false, lastCode = '', lastAt = 0, stream = null, video = null, loopTimer = null, h5 = null;
+  let facing = 'environment', torchOn = false;
   const camMsg = t => { $('#camnote').textContent = t; };
+  const HD = {width: {ideal: 1920}, height: {ideal: 1080}};
+
+  function onCode(text) {
+    text = String(text).trim();
+    const now = Date.now();
+    // same barcode ignored for 1.5 s, any barcode for 0.7 s → holding a product in view counts it once
+    if ((text === lastCode && now - lastAt < 1500) || now - lastAt < 700) { if (text === lastCode) lastAt = now; return; }
+    lastCode = text; lastAt = now;
+    camMsg('Read: ' + text);
+    handle(text);
+  }
+
+  async function tuneTrack(track) {
+    try {
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      const adv = {};
+      if (caps.focusMode && caps.focusMode.includes('continuous')) adv.focusMode = 'continuous';
+      if (Object.keys(adv).length) await track.applyConstraints({advanced: [adv]});
+      $('#torch').hidden = !caps.torch;
+    } catch(e) {}
+  }
+
+  async function nativeSupported() {
+    if (!('BarcodeDetector' in window)) return false;
+    try { const f = await BarcodeDetector.getSupportedFormats(); return f.includes('ean_13'); } catch(e) { return false; }
+  }
+
+  async function startNative() {
+    const want = ['ean_13','ean_8','upc_a','upc_e','code_128','itf'];
+    const fmts = (await BarcodeDetector.getSupportedFormats()).filter(f => want.includes(f));
+    const det = new BarcodeDetector({formats: fmts});
+    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: facing}, ...HD}});
+    video = document.createElement('video');
+    video.setAttribute('playsinline', ''); video.muted = true; video.srcObject = stream;
+    $('#cam').innerHTML = ''; $('#cam').append(video);
+    const g = document.createElement('div'); g.id = 'camguide'; $('#cam').append(g);
+    await video.play();
+    await tuneTrack(stream.getVideoTracks()[0]);
+    let busy = false;
+    const tick = async () => {
+      if (!camOn) return;
+      if (!busy && video.readyState >= 2) {
+        busy = true;
+        try { const r = await det.detect(video); if (r.length) onCode(r[0].rawValue); } catch(e) {}
+        busy = false;
+      }
+      loopTimer = setTimeout(tick, 90);
+    };
+    camOn = true; tick();
+    camMsg('Camera on (built-in reader). Hold the barcode along the red line.');
+  }
+
+  async function startZxing() {
+    if (!window.Html5Qrcode) throw new Error('Camera scanner did not load. Check the internet connection.');
+    $('#cam').innerHTML = '<div id="camzx"></div>';
+    const F = Html5QrcodeSupportedFormats;
+    h5 = new Html5Qrcode('camzx', {formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.ITF], verbose: false});
+    await h5.start({facingMode: facing},
+      {fps: 15, disableFlip: true, videoConstraints: {facingMode: facing, ...HD},
+       qrbox: (w, h) => ({width: Math.floor(w * 0.9), height: Math.floor(Math.min(h * 0.45, w * 0.4))})},
+      onCode, () => {});
+    camOn = true;
+    try { const v = document.querySelector('#camzx video'); if (v && v.srcObject) await tuneTrack(v.srcObject.getVideoTracks()[0]); } catch(e) {}
+    camMsg('Camera on. Hold the barcode flat inside the box, 10–20 cm away.');
+  }
+
   async function startCam() {
-    if (!window.Html5Qrcode) { say('Camera scanner did not load. Check the internet connection.', 'bad'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      say('This browser cannot use the camera here. Open https://do-landnl.github.io/Scanner/ in Chrome or Safari.', 'bad'); beep(false); return;
+    }
     $('#campanel').hidden = false;
     try {
-      const F = Html5QrcodeSupportedFormats;
-      cam = cam || new Html5Qrcode('cam', {
-        formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.ITF],
-        experimentalFeatures: {useBarCodeDetectorIfSupported: true}, verbose: false});
-      await cam.start({facingMode: 'environment'},
-        {fps: 12, qrbox: (w, h) => ({width: Math.min(320, w * 0.9), height: Math.min(140, h * 0.5)})},
-        text => {
-          const now = Date.now();
-          // ignore the same barcode for 1.5 s and any barcode for 0.7 s, so one product = one count
-          if ((text === lastCode && now - lastAt < 1500) || now - lastAt < 700) { if (text === lastCode) lastAt = now; return; }
-          lastCode = text; lastAt = now;
-          handle(text);
-        });
-      camOn = true; $('#camBtn').classList.add('on'); $('#camBtn').textContent = 'Stop camera';
+      if (await nativeSupported()) await startNative(); else await startZxing();
+      $('#camBtn').classList.add('on'); $('#camBtn').textContent = 'Stop camera';
+      $('#campanel').scrollIntoView({block: 'nearest'});
     } catch (e) {
-      $('#campanel').hidden = true;
+      await stopCam();
       const m = String(e && (e.name || e.message || e));
       say(/NotAllowed|Permission|denied|policy/i.test(m)
-        ? 'Camera blocked. Allow the camera for this page, or open the scanner from its https website (the Claude link cannot use the camera).'
+        ? 'Camera blocked. Allow the camera for this site in the browser settings, then tap Camera again.'
         : 'Camera could not start: ' + m, 'bad');
       beep(false);
     }
   }
   async function stopCam() {
-    try { if (cam && camOn) await cam.stop(); } catch(e){}
-    camOn = false; $('#campanel').hidden = true; $('#camBtn').classList.remove('on'); $('#camBtn').textContent = 'Camera';
+    camOn = false; clearTimeout(loopTimer);
+    try { if (h5) { await h5.stop(); h5.clear(); } } catch(e){}
+    h5 = null;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; video = null; torchOn = false;
+    $('#cam').innerHTML = ''; $('#campanel').hidden = true; $('#torch').hidden = true;
+    $('#camBtn').classList.remove('on'); $('#camBtn').textContent = 'Camera';
   }
   $('#camBtn').onclick = () => camOn ? stopCam() : startCam();
+  $('#flipcam').onclick = async () => { facing = facing === 'environment' ? 'user' : 'environment'; await stopCam(); startCam(); };
+  $('#torch').onclick = async () => {
+    try {
+      const v = video || document.querySelector('#camzx video');
+      const track = v && v.srcObject && v.srcObject.getVideoTracks()[0];
+      torchOn = !torchOn; await track.applyConstraints({advanced: [{torch: torchOn}]});
+      $('#torch').classList.toggle('on', torchOn);
+    } catch(e) { $('#torch').hidden = true; }
+  };
+  // tapping the picture asks the camera to refocus
+  $('#cam').addEventListener('click', () => {
+    const v = video || document.querySelector('#camzx video');
+    if (v && v.srcObject) tuneTrack(v.srcObject.getVideoTracks()[0]);
+  });
 
   // ---------- file loading ----------
   $('#file').addEventListener('change', e => { e.target.files[0] && readFile(e.target.files[0]); e.target.value = ''; });
