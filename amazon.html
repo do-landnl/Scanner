@@ -348,7 +348,7 @@
   // Only the filter box and the column dropdowns may take focus away (while you use them).
   // fields where the user types: the cursor lock and the "digits go to the scan box" rule leave these alone
   const mayHoldFocus = el => el && (el.id === 'search' || el.id === 'boxqty' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA'
-    || el.classList.contains('expin') || el.classList.contains('bvqty') || !!(el.closest && el.closest('#addbox, #qtyask, #boxview')));
+    || el.classList.contains('expin') || el.classList.contains('bvqty') || el.id === 'startn' || !!(el.closest && el.closest('#addbox, #qtyask, #boxview')));
   const lock = () => {
     if (camOn || picking || !$('#sharebox').hidden) return;   // camera, photo or share window open: leave focus alone
     if (typeof pending !== 'undefined' && pending) { if (document.activeElement !== $('#boxqty')) $('#boxqty').focus(); return; }
@@ -892,9 +892,11 @@
           if (!nBoxes) return `<b>${need(i)}</b><small class="left">planned</small>`;
           // completed boxes are deducted from the plan; the open box shows separately
           const doneU = Object.entries(boxes[i] || {}).filter(([b]) => doneBoxes[b]).reduce((s, [, n]) => s + n, 0);
-          const openU = curBox && !doneBoxes[curBox] ? (boxes[i] || {})[curBox] || 0 : 0;
+          const openE = Object.entries(boxes[i] || {}).filter(([b, n]) => !doneBoxes[b] && n > 0);
+          const openU = openE.reduce((s, [, n]) => s + n, 0);
           const rest = need(i) - doneU;
-          return `<b class="${rest < 0 ? 'neg' : ''}">${rest}</b><small class="left">of ${need(i)} planned${openU ? ` · ${openU} in Box ${curBox} now` : ''}${rest - openU === 0 && rest >= 0 && openU ? ' · all in' : ''}${rest < 0 ? ' · too many!' : ''}</small>`;
+          const openTxt = openE.map(([b, n]) => `${n} in Box ${b}`).join(', ');
+          return `<b class="${rest < 0 ? 'neg' : ''}">${rest}</b><small class="left">of ${need(i)} planned${openU ? ` · ${openTxt} now` : ''}${rest - openU === 0 && rest >= 0 && openU ? ' · all in' : ''}${rest < 0 ? ' · too many!' : ''}</small>`;
         })()}<span class="rowtools"><button class="mini" data-q="${i}" title="Change planned quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span>${curBox && !doneBoxes[curBox] ? `<button class="addto" data-a="${i}" title="Add this product to Box ${curBox} without scanning">+ Add to Box ${curBox}</button>` : ''}</td>
         <td class="pname">${esc(val(r, cName))}${phone}${plan}${packed ? `<span class="packed">${packed}</span>` : ''}</td>
         <td class="extra brand">${esc(brand)}</td>
@@ -1087,7 +1089,7 @@
       // no open box (setup, or the last box was completed): a scan only finds the product in the plan
       lastIdx = hits[0];
       const left = Math.max(0, need(hits[0]) - counts[hits[0]]);
-      say(`In the plan: ${label(hits[0])} — ${left} of ${need(hits[0])} still to pack. Click "${nBoxes ? '+ New box' : 'Start packing: New box'}" to pack it.`, 'part'); beep(true);
+      say(`In the plan: ${label(hits[0])} — ${left} of ${need(hits[0])} still to pack. ${nBoxes ? 'Click an open box (or "+ New box")' : 'Click "Start packing"'} to pack it.`, 'part'); beep(true);
       render(true); return;
     }
     const i = hits.find(h => counts[h] < need(h));
@@ -1143,7 +1145,8 @@
       // setup phase: the plan is being built, no box yet
       const units = rows.reduce((s, _, i) => s + need(i), 0);
       h = `<b>Setup:</b> <span class="note">${rows.length} products · ${units} units planned. When the plan is ready:</span>
-           <button id="newbox" class="primary">Start packing: New box</button>`;
+           <label class="note">Start with <input id="startn" type="text" inputmode="numeric" value="3" size="2" style="width:3em;text-align:center"> boxes</label>
+           <button id="newbox" class="primary">Start packing</button>`;
     } else {
       h = '<b>Boxes:</b>';
       for (let b = 1; b <= nBoxes; b++) h += `<button class="bx${b === curBox ? ' on' : ''}${doneBoxes[b] ? ' done' : ''}" data-box="${b}">${doneBoxes[b] ? '✓ ' : ''}Box ${b}<small>${boxUnits(b)}</small></button>`;
@@ -1156,12 +1159,16 @@
     });
     $('#newbox').onclick = () => {
       if (pending) commitQty(null);
-      // starting the next box closes the open one (if anything is in it)
-      const prev = curBox && !doneBoxes[curBox] && boxUnits(curBox) ? curBox : 0;
-      if (prev) doneBoxes[prev] = true;
+      // several boxes can be open at once; click a box to choose where scans go, complete each one separately
+      if (!nBoxes) {
+        const n = Math.max(1, Math.min(50, Math.round(toNum($('#startn').value)) || 1));
+        nBoxes = n; curBox = 1; store(); render();
+        say(`${n} box${n === 1 ? '' : 'es'} open — packing Box 1. Click a box above to switch where scans go.`, 'ok'); lock(); return;
+      }
       nBoxes++; curBox = nBoxes; store(); render();
-      say((prev ? `Box ${prev} completed (${boxUnits(prev)} units). ` : '') + `Box ${curBox} started — scan the products for this box`, 'ok');
+      say(`Box ${curBox} added — scan the products for this box`, 'ok');
     };
+    if ($('#startn')) $('#startn').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('#newbox').click(); } };
   }
   function completeBox() {
     if (!curBox || doneBoxes[curBox]) return;
@@ -1171,8 +1178,10 @@
     const b = curBox, u = boxUnits(b);
     store(); render();   // the completed box stays on screen with its "Amazon manifest – Box N" button
     const left = rows.reduce((s, _, i) => s + Math.max(0, need(i) - counts[i]), 0);
+    const open = [...Array(nBoxes)].map((_, k) => k + 1).filter(x => !doneBoxes[x]);
     say(`✓ Box ${b} completed: ${u} units. Click "Amazon manifest – Box ${b}" to make its upload file.`
-      + (left ? ` ${left} units left in the plan — then "+ New box" for the next box.` : ' Everything is packed.'), 'ok'); beep(true);
+      + (open.length ? ` Still open: ${open.map(x => 'Box ' + x).join(', ')} — click one to keep packing.`
+         : left ? ` ${left} units left in the plan — "+ New box" for the next box.` : ' Everything is packed.'), 'ok'); beep(true);
     lock();
   }
   function reopenBox() {
@@ -1187,7 +1196,7 @@
     ph.hidden = false;
     const inDone = rows.reduce((s, _, i) => s + Object.entries(boxes[i] || {}).filter(([b]) => doneBoxes[b]).reduce((a, [, n]) => a + n, 0), 0);
     const nDone = Object.keys(doneBoxes).filter(b => doneBoxes[b]).length;
-    ph.textContent = nBoxes ? `Shipment plan — ${planned - inDone} of ${planned} units still to pack (${nDone} box${nDone === 1 ? '' : 'es'} completed${packed > inDone ? `, ${packed - inDone} in the open box` : ''})`
+    ph.textContent = nBoxes ? `Shipment plan — ${planned - inDone} of ${planned} units still to pack (${nDone} box${nDone === 1 ? '' : 'es'} completed${packed > inDone ? `, ${packed - inDone} in open boxes` : ''})`
                             : `Shipment plan (setup) — ${rows.length} products, ${planned} units`;
     if (!curBox) { v.hidden = true; return; }
     const locked = !!doneBoxes[curBox];
