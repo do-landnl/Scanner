@@ -196,7 +196,8 @@
   /* shipment row: name, New shipment, saved shipments — its own coloured band */
   #addbox .addrow:first-child{background:color-mix(in srgb,var(--accent) 14%,var(--card));border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line));border-radius:8px;padding:8px 10px;font-weight:700;color:var(--accent)}
   #shipname{font-weight:700;border:2px solid var(--accent)!important;color:var(--fg)}
-  #newship{background:var(--accent);border-color:var(--accent);color:var(--on-bx);font-weight:700}
+  #newship{background:var(--amz);border-color:var(--amz);color:var(--amz-ink);font-weight:700}
+  #newship:hover{filter:brightness(1.06);border-color:var(--amz-ink)}
   #newship::before{content:"+ "}
   #savedship{border:2px solid color-mix(in srgb,var(--accent) 50%,var(--line))!important;font-weight:600;color:var(--fg)}
   #addbtn{background:var(--ok-ink);border-color:var(--ok-ink);color:var(--card)}
