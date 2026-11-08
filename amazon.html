@@ -559,6 +559,17 @@
           if (amz && (!bestAmz || amz.length > bestAmz.length)) bestAmz = amz;
         });
         if (bestAmz) best = bestAmz;
+        else if (AMZ) {
+          // a list with only EAN codes + quantities: SKU / FNSKU / ASIN / name come from the product memory
+          let bestE = null;
+          wb.SheetNames.forEach(n => { const e = eanParse(XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:true, defval:''}));
+            if (e && (!bestE || e.rows.length > bestE.rows.length)) bestE = e; });
+          if (bestE) {
+            linkValue = null; setup(f.name, [AMZ_HEADERS, ...bestE.rows]);
+            if (bestE.missing.length) say(`${bestE.rows.length} products loaded from EAN codes — ⚠ ${bestE.missing.length} EAN(s) not in the product memory (no SKU, left out of the manifest): ${bestE.missing.slice(0, 8).join(', ')}${bestE.missing.length > 8 ? '…' : ''}. Paste their details from Seller Central to complete them.`, 'part');
+            lock(); return;
+          }
+        }
         linkValue = null;
         setup(f.name, best);
       } catch(err) { say('Could not read this file. Open the .xlsx you downloaded from the Qogita order page.', 'bad'); beep(false); }
@@ -647,6 +658,50 @@
                 boxes.map(b => `${b[0]}: ${b[1]}`).join(' · '), '']);
     });
     return out.length ? [['name', 'Brand', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes', 'Other EANs'], ...out] : null;
+  }
+
+  // EAN list → FBA rows. Finds an EAN column (heading EAN / GTIN / barcode / UPC, else the column that is mostly 8–14 digits)
+  // and a quantity column (heading qty / quantity / units / total…, else the first small-number column next to it).
+  function eanParse(aoa) {
+    if (!aoa || !aoa.length) return null;
+    const isEan = v => /^\d{8,14}$/.test(normEan(v)) && String(normEan(v)).length >= 8;
+    const hr = aoa.findIndex((r, i) => i < 30 && r.some(c => /^\s*(ean|ean13|gtin|barcode|upc|ean code|ean-code)\b/i.test(String(c))));
+    let eCol = -1, qCol = -1, start = 0;
+    if (hr >= 0) {
+      const h = aoa[hr].map(c => String(c ?? ''));
+      eCol = h.findIndex(c => /^\s*(ean|ean13|gtin|barcode|upc|ean code|ean-code)\b/i.test(c));
+      qCol = h.findIndex(c => /qty|quantity|qnt|units|aantal|anzahl|menge|stuks|total|labeled|pcs|cantitate|buc/i.test(c));
+      if (qCol < 0 && h.some(c => /^\s*fnsku\s*$/i.test(c))) return null;   // the product list itself, not an order
+      start = hr + 1;
+    } else {
+      const width = Math.max(...aoa.map(r => r.length));
+      for (let c = 0; c < width && eCol < 0; c++) {
+        const vals = aoa.map(r => r[c]).filter(v => v !== '' && v !== null && v !== undefined);
+        if (vals.length && vals.filter(isEan).length >= Math.max(1, vals.length * 0.6)) eCol = c;
+      }
+    }
+    if (eCol < 0) return null;
+    if (qCol < 0) {   // first column with small whole numbers
+      const width = Math.max(...aoa.map(r => r.length));
+      for (let c = 0; c < width && qCol < 0; c++) {
+        if (c === eCol) continue;
+        const vals = aoa.slice(start).map(r => r[c]).filter(v => v !== '' && v !== null && v !== undefined);
+        if (vals.length && vals.every(v => toNum(v) > 0 && toNum(v) < 100000 && !isEan(v))) qCol = c;
+      }
+    }
+    const byEan = new Map(), missing = [];
+    aoa.slice(start).forEach(r => {
+      if (!isEan(r[eCol])) return;
+      const ean = normEan(r[eCol]), qty = qCol >= 0 ? Math.round(toNum(r[qCol])) : 1;
+      if (!(qty > 0)) return;
+      const cur = byEan.get(ean);
+      if (cur) { cur[6] += qty; return; }
+      const p = catFind(ean);
+      if (!p) missing.push(showEan(r[eCol]));
+      byEan.set(ean, p ? [p.title || p.sku || ean, p.brand || '', p.ean || showEan(r[eCol]), p.fnsku || '', p.sku || '', p.asin || '', qty, '', (p.eans || []).join('; ')]
+                       : [showEan(r[eCol]), '', showEan(r[eCol]), '', '', '', qty, '', '']);
+    });
+    return byEan.size ? {rows: [...byEan.values()], missing} : null;
   }
 
   function setup(name, aoa) {
@@ -1395,7 +1450,7 @@
           const ix = k => head.indexOf(k);
           if (ix('FNSKU') < 0 && ix('SKU') < 0) {
             // a shipment sheet (pasted products + "total labeled") loaded with the wrong button: open it as the shipment
-            const isShip = wb.SheetNames.some(n => amazonParse(XLSX.utils.sheet_to_json(wb.Sheets[n], {header: 1, raw: true, defval: ''})));
+            const isShip = wb.SheetNames.some(n => { const a = XLSX.utils.sheet_to_json(wb.Sheets[n], {header: 1, raw: true, defval: ''}); return amazonParse(a) || eanParse(a); });
             if (isShip) { readFile(file); return; }
             say('This is not a product list (needs SKU / FNSKU columns). To pack a shipment sheet use "Open order file".', 'bad'); return;
           }
