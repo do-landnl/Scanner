@@ -1,0 +1,438 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Qogita Pack Scanner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  /* Layout: sticky scan console on top (the only thing the packer looks at), order lines below as a pick list. */
+  :root{
+    --bg:#f2f4f3; --card:#ffffff; --fg:#17201c; --mute:#5d6b65; --line:#d6ddd9; --head:#e7ecea;
+    --accent:#0f6b5c; --accent-soft:#dff1ec;
+    --ok:#cdeed3; --ok-ink:#17702f; --part:#fdf0bd; --part-ink:#8a6400; --bad:#ffd9d6; --bad-ink:#b3261e;
+    --sans:"IBM Plex Sans", "Segoe UI", system-ui, Arial, sans-serif;
+    --mono:"IBM Plex Mono", Consolas, "Courier New", monospace;
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#121715; --card:#1a211e; --fg:#e6ece9; --mute:#93a39c; --line:#2d3833; --head:#222b27;
+    --accent:#4fc2a8; --accent-soft:#183a32;
+    --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92; color-scheme:dark }}
+  :root[data-theme="dark"]{
+    --bg:#121715; --card:#1a211e; --fg:#e6ece9; --mute:#93a39c; --line:#2d3833; --head:#222b27;
+    --accent:#4fc2a8; --accent-soft:#183a32;
+    --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92; color-scheme:dark }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--fg);font:15px/1.4 var(--sans)}
+  body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--card)}
+  .pad{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding-block:12px;display:grid;gap:8px}
+  .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.01em}
+  h1 small{font-weight:500;color:var(--mute);font-size:13px;margin-left:6px}
+  .tools{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+  button,label.btn{font:500 14px var(--sans);padding:8px 12px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;cursor:pointer;touch-action:manipulation}
+  button:hover,label.btn:hover{border-color:var(--accent)}
+  button:focus-visible,label.btn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+  button.on{background:var(--accent-soft);border-color:var(--accent)}
+  .scanrow{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
+  .scanbox{flex:1 1 320px;min-width:0;position:relative}
+  #scan{width:100%;font:600 26px var(--mono);letter-spacing:.04em;padding:12px 14px;border:3px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);outline:none}
+  #scan:focus{border-color:var(--accent)}
+  #scan.flash-ok{border-color:var(--ok-ink);background:var(--ok)}
+  #scan.flash-bad{border-color:var(--bad-ink);background:var(--bad)}
+  #ready{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;padding:0 12px;border-radius:10px;border:1px solid var(--line);white-space:nowrap}
+  #ready .dot{width:12px;height:12px;border-radius:50%;background:var(--bad-ink)}
+  #ready.live{color:var(--ok-ink)} #ready.live .dot{background:var(--ok-ink);box-shadow:0 0 0 4px var(--ok)}
+  #ready:not(.live){color:var(--bad-ink);cursor:pointer}
+  #msg{font-size:20px;font-weight:700;min-height:28px;overflow-wrap:anywhere}
+  #msg.ok{color:var(--ok-ink)} #msg.bad{color:var(--bad-ink)} #msg.part{color:var(--part-ink)}
+  .stats{display:flex;gap:16px;color:var(--mute);flex-wrap:wrap;font-variant-numeric:tabular-nums}
+  .stats b{color:var(--fg)}
+  .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+  .bar>div{height:100%;background:var(--ok-ink);width:0%;transition:width .2s}
+  main{padding-block:12px 40px;display:grid;gap:10px}
+  #drop{border:2px dashed var(--line);border-radius:12px;padding:32px 16px;text-align:center;color:var(--mute);background:var(--card)}
+  #drop.over{border-color:var(--accent);color:var(--accent)}
+  #drop p{margin:6px 0}
+  .colmap{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;gap:8px 14px;flex-wrap:wrap;align-items:center;font-size:14px}
+  .colmap select{font:inherit;padding:4px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px}
+  .filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .filters input{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);flex:1 1 180px;min-width:0}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+  th{background:var(--head);font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);white-space:nowrap}
+  td.ean{font-family:var(--mono);white-space:nowrap}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  td.cnt{white-space:nowrap;font-variant-numeric:tabular-nums}
+  td.cnt b{font-size:17px;display:inline-block;min-width:58px;text-align:center}
+  .mini{padding:3px 10px;font-size:15px}
+  tr.done td{background:var(--ok)} tr.done td.cnt b{color:var(--ok-ink)}
+  tr.part td{background:var(--part)} tr.part td.cnt b{color:var(--part-ink)}
+  tr.over td{background:var(--bad)} tr.over td.cnt b{color:var(--bad-ink)}
+  tr.last td{box-shadow:inset 0 3px 0 var(--accent),inset 0 -3px 0 var(--accent)}
+  #unknown{color:var(--bad-ink);font-weight:500}
+  #campanel{display:grid;gap:6px}
+  #cam{width:100%;max-width:480px;border-radius:10px;overflow:hidden;background:#000}
+  #cam video{width:100%!important;display:block}
+  #confirmReset{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--bad-ink);font-weight:600}
+  .note{color:var(--mute);font-size:13px}
+  @media (max-width:700px){
+    .extra{display:none}
+    #scan{font-size:22px}
+    #msg{font-size:18px}
+    .tools{margin-left:0}
+  }
+  @media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
+</style>
+
+<header class="pad">
+  <div class="top">
+    <h1>Qogita Pack Scanner<small id="fname"></small></h1>
+    <div class="tools">
+      <label class="btn">Open order file<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
+      <button id="undo" title="Undo last scan (F2)">Undo last</button>
+      <button id="camBtn" title="Scan barcodes with the phone, tablet or PC camera">Camera</button>
+      <button id="kbd" title="Show the on-screen keyboard to type a barcode by hand">Keyboard</button>
+      <button id="export">Export Excel</button>
+      <button id="reset">Reset scans</button>
+    </div>
+  </div>
+  <div class="scanrow">
+    <div class="scanbox"><input id="scan" placeholder="Scan barcode…" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" enterkeyhint="done" autofocus></div>
+    <div id="ready"><span class="dot"></span><span id="readytxt">Tap to scan</span></div>
+  </div>
+  <div id="campanel" hidden>
+    <div id="cam"></div>
+    <div class="note" id="camnote">Hold the barcode inside the box. One beep = one unit. Move the product away before scanning the next unit of the same item.</div>
+  </div>
+  <div id="confirmReset" hidden>Clear all scans for this order? <button id="yesReset">Yes, clear</button><button id="noReset">Cancel</button></div>
+  <div id="msg"></div>
+  <div class="stats" id="stats"></div>
+  <div class="bar"><div id="bar"></div></div>
+</header>
+
+<main class="pad">
+  <div id="drop">
+    <p><b>Open the Qogita order Excel</b> (the file you download from the order page, e.g. 73DEZ3K.xlsx) or drop it here.</p>
+    <p>Then just scan. The scan box keeps the cursor all the time — no Ctrl+F, no clicking.</p>
+    <p class="note">Green = line complete · Yellow = partly scanned · Red = too many or not in this order</p>
+  </div>
+  <div id="mapbox" class="colmap" hidden></div>
+  <div class="filters" id="filters" hidden>
+    <button class="mini on" data-f="all">All</button>
+    <button class="mini" data-f="todo">To do</button>
+    <button class="mini" data-f="part">Partial</button>
+    <button class="mini" data-f="done">Done</button>
+    <input id="search" placeholder="Filter by name or barcode…" autocomplete="off">
+  </div>
+  <div id="unknown"></div>
+  <div id="tablewrap"></div>
+</main>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const scan = $('#scan');
+  let fileName = '', headers = [], rows = [], map = {ean:-1, qty:-1, name:-1, order:-1};
+  let counts = [], history = [], unknown = {}, lastIdx = -1, filter = 'all', keyboard = false;
+
+  // ---------- helpers ----------
+  const esc = v => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const normEan = v => {
+    if (v === null || v === undefined) return '';
+    let s = (typeof v === 'number') ? Math.round(v).toString() : String(v).trim();
+    s = s.replace(/\.0+$/, '').replace(/\D/g, '');
+    return s.replace(/^0+/, '');           // EAN-13 / UPC-12 / GTIN-14 match regardless of leading zeros
+  };
+  const showEan = v => (typeof v === 'number') ? Math.round(v).toString() : String(v ?? '');
+  const toNum = v => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : 0; };
+  const store = () => { try { localStorage.setItem('qps:' + fileName, JSON.stringify({counts, history, unknown})); } catch(e){} };
+  const load  = () => { try { return JSON.parse(localStorage.getItem('qps:' + fileName) || 'null'); } catch(e){ return null; } };
+
+  let actx;
+  const beep = ok => {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.frequency.value = ok ? 1100 : 220; o.type = ok ? 'sine' : 'square';
+      g.gain.value = 0.15; o.connect(g); g.connect(actx.destination);
+      o.start(); o.stop(actx.currentTime + (ok ? 0.08 : 0.45));
+    } catch(e){}
+  };
+  const say = (text, cls) => {
+    const m = $('#msg'); m.textContent = text; m.className = cls;
+    scan.classList.remove('flash-ok','flash-bad'); void scan.offsetWidth;
+    scan.classList.add(cls === 'bad' ? 'flash-bad' : 'flash-ok');
+    setTimeout(() => scan.classList.remove('flash-ok','flash-bad'), 600);
+  };
+
+  // ---------- cursor lock: the scan box always has focus ----------
+  // Only the filter box and the column dropdowns may take focus away (while you use them).
+  const mayHoldFocus = el => el && (el.id === 'search' || el.tagName === 'SELECT');
+  const lock = () => {
+    const a = document.activeElement;
+    if (a !== scan && !mayHoldFocus(a)) scan.focus({preventScroll:true});
+    paintReady();
+  };
+  const paintReady = () => {
+    const live = document.activeElement === scan && document.hasFocus();
+    $('#ready').classList.toggle('live', live);
+    $('#readytxt').textContent = live ? 'Ready to scan' : 'Tap to scan';
+  };
+  window.addEventListener('load', lock);
+  window.addEventListener('focus', lock);
+  window.addEventListener('blur', paintReady);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) lock(); });
+  document.addEventListener('click', () => setTimeout(lock, 0));
+  document.addEventListener('touchend', () => setTimeout(lock, 0));
+  scan.addEventListener('blur', () => setTimeout(lock, 120));
+  scan.addEventListener('focus', paintReady);
+  $('#ready').addEventListener('click', () => scan.focus());
+  setInterval(lock, 700);   // safety net: grabs the cursor back after dialogs, file pickers, alt-tab
+  // a scanner can also "type" while focus is elsewhere: catch digits and route them to the scan box
+  document.addEventListener('keydown', e => {
+    if (document.activeElement === scan || mayHoldFocus(document.activeElement)) return;
+    if (/^[0-9]$/.test(e.key)) { scan.focus(); scan.value += e.key; e.preventDefault(); }
+  });
+
+  // tablets/phones: inputmode="none" keeps the on-screen keyboard closed so a Bluetooth scanner can type
+  $('#kbd').onclick = () => {
+    keyboard = !keyboard;
+    scan.setAttribute('inputmode', keyboard ? 'numeric' : 'none');
+    $('#kbd').classList.toggle('on', keyboard);
+    scan.blur(); setTimeout(() => scan.focus(), 50);
+  };
+
+  // ---------- camera scanning (phone / tablet / webcam) ----------
+  let cam = null, camOn = false, lastCode = '', lastAt = 0;
+  const camMsg = t => { $('#camnote').textContent = t; };
+  async function startCam() {
+    if (!window.Html5Qrcode) { say('Camera scanner did not load. Check the internet connection.', 'bad'); return; }
+    $('#campanel').hidden = false;
+    try {
+      const F = Html5QrcodeSupportedFormats;
+      cam = cam || new Html5Qrcode('cam', {
+        formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.ITF],
+        experimentalFeatures: {useBarCodeDetectorIfSupported: true}, verbose: false});
+      await cam.start({facingMode: 'environment'},
+        {fps: 12, qrbox: (w, h) => ({width: Math.min(320, w * 0.9), height: Math.min(140, h * 0.5)})},
+        text => {
+          const now = Date.now();
+          // ignore the same barcode for 1.5 s and any barcode for 0.7 s, so one product = one count
+          if ((text === lastCode && now - lastAt < 1500) || now - lastAt < 700) { if (text === lastCode) lastAt = now; return; }
+          lastCode = text; lastAt = now;
+          handle(text);
+        });
+      camOn = true; $('#camBtn').classList.add('on'); $('#camBtn').textContent = 'Stop camera';
+    } catch (e) {
+      $('#campanel').hidden = true;
+      const m = String(e && (e.name || e.message || e));
+      say(/NotAllowed|Permission|denied|policy/i.test(m)
+        ? 'Camera blocked. Allow the camera for this page, or open the scanner from its https website (the Claude link cannot use the camera).'
+        : 'Camera could not start: ' + m, 'bad');
+      beep(false);
+    }
+  }
+  async function stopCam() {
+    try { if (cam && camOn) await cam.stop(); } catch(e){}
+    camOn = false; $('#campanel').hidden = true; $('#camBtn').classList.remove('on'); $('#camBtn').textContent = 'Camera';
+  }
+  $('#camBtn').onclick = () => camOn ? stopCam() : startCam();
+
+  // ---------- file loading ----------
+  $('#file').addEventListener('change', e => { e.target.files[0] && readFile(e.target.files[0]); e.target.value = ''; });
+  const drop = $('#drop');
+  ['dragover','dragenter'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave','drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  document.addEventListener('drop', e => e.dataTransfer.files[0] && readFile(e.dataTransfer.files[0]));
+
+  function readFile(f) {
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+        let best = null;
+        wb.SheetNames.forEach(n => {
+          const aoa = XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:true, defval:''});
+          if (!best || aoa.length > best.length) best = aoa;
+        });
+        setup(f.name, best);
+      } catch(err) { say('Could not read this file. Open the .xlsx you downloaded from the Qogita order page.', 'bad'); beep(false); }
+      lock();
+    };
+    r.readAsArrayBuffer(f);
+  }
+
+  function setup(name, aoa) {
+    // Qogita order downloads have ~15 rows of billing/shipping address before the "gtin" header
+    let hr = aoa.findIndex((r, i) => i < 60 && r.some(c => /^\s*(gtin|ean|ean13|barcode|upc)\b/i.test(String(c))));
+    if (hr < 0) hr = aoa.findIndex(r => r.filter(c => c !== '').length >= 2);
+    headers = aoa[hr].map((h, i) => String(h || ('Col ' + (i + 1))).trim());
+    rows = aoa.slice(hr + 1).filter(r => r.some(c => c !== ''));
+    fileName = name;
+    autoMap();
+    const saved = load();
+    if (saved && saved.counts && saved.counts.length === rows.length) {
+      counts = saved.counts; history = saved.history || []; unknown = saved.unknown || {};
+      say('Resumed your scans for ' + name, 'ok');
+    } else {
+      counts = rows.map(() => 0); history = []; unknown = {};
+      say(rows.length + ' lines loaded — start scanning', 'ok');
+    }
+    lastIdx = -1;
+    $('#fname').textContent = '· ' + name.replace(/\.(xlsx|xls|csv)$/i, '');
+    drop.hidden = true; $('#filters').hidden = false;
+    renderMap(); render();
+  }
+
+  function autoMap() {
+    const find = re => headers.findIndex(h => re.test(h));
+    map.ean   = find(/^\s*(gtin|ean|ean13|barcode|upc)\b/i);
+    if (map.ean < 0) map.ean = find(/gtin|ean|barcode|upc/i);
+    map.qty   = find(/^(qty|quantity|units?|aantal)/i);
+    if (map.qty < 0) map.qty = find(/qty|quantity|units/i);
+    map.name  = find(/^(name|product|title|description)/i);
+    if (map.name < 0) map.name = find(/name|title|product|description/i);
+    map.order = find(/^order/i);
+    if (map.ean < 0) {
+      let bestScore = 0;
+      headers.forEach((_, c) => {
+        const score = rows.filter(r => /^\d{8,14}$/.test(normEan(r[c]).padStart(8,'0'))).length;
+        if (score > bestScore) { bestScore = score; map.ean = c; }
+      });
+    }
+  }
+
+  function renderMap() {
+    const box = $('#mapbox'); box.hidden = false;
+    const sel = (key, label) => `<label>${label} <select id="map-${key}" data-k="${key}"><option value="-1">—</option>${
+      headers.map((h,i) => `<option value="${i}" ${map[key]===i?'selected':''}>${esc(h)}</option>`).join('')}</select></label>`;
+    box.innerHTML = sel('ean','Barcode') + sel('qty','Quantity') + sel('name','Product')
+      + '<span class="note">Found automatically. Change only if wrong.</span>';
+    box.querySelectorAll('select').forEach(s => s.onchange = () => { map[s.dataset.k] = +s.value; render(); s.blur(); lock(); });
+  }
+
+  // ---------- scanning ----------
+  const need = i => map.qty >= 0 ? toNum(rows[i][map.qty]) : 1;
+  const status = i => counts[i] === 0 ? 'todo' : counts[i] < need(i) ? 'part' : counts[i] === need(i) ? 'done' : 'over';
+  const label = i => map.name >= 0 && rows[i][map.name] ? rows[i][map.name] : showEan(rows[i][map.ean]);
+
+  scan.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); handle(scan.value); scan.value = ''; }
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'F2') { e.preventDefault(); undo(); } });
+
+  function handle(raw) {
+    const code = normEan(raw);
+    if (!code) return;
+    if (!rows.length) { say('Open an order file first', 'bad'); beep(false); return; }
+    const hits = rows.map((r, i) => normEan(r[map.ean]) === code ? i : -1).filter(i => i >= 0);
+    if (!hits.length) {
+      unknown[code] = (unknown[code] || 0) + 1; store();
+      say('✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
+    }
+    const i = hits.find(h => counts[h] < need(h)) ?? hits[0];
+    counts[i]++; history.push(i); lastIdx = i; store();
+    const st = status(i);
+    if (st === 'over') { say(`⚠ TOO MANY: ${label(i)} — ${counts[i]} / ${need(i)}`, 'bad'); beep(false); }
+    else if (st === 'done') { say(`✓ COMPLETE: ${label(i)} — ${counts[i]} / ${need(i)}`, 'ok'); beep(true); }
+    else { say(`+1 ${label(i)} — ${counts[i]} / ${need(i)}`, 'part'); beep(true); }
+    render(true);
+  }
+
+  function undo() {
+    if (!history.length) return;
+    const i = history.pop(); counts[i] = Math.max(0, counts[i] - 1); lastIdx = i; store();
+    say(`Undone: ${label(i)} — ${counts[i]} / ${need(i)}`, 'part');
+    render(true);
+  }
+  $('#undo').onclick = undo;
+
+  // in-page confirmation (works in every browser and inside the Claude viewer)
+  $('#reset').onclick = () => { if (rows.length) $('#confirmReset').hidden = false; };
+  $('#noReset').onclick = () => { $('#confirmReset').hidden = true; };
+  $('#yesReset').onclick = () => {
+    counts = rows.map(() => 0); history = []; unknown = {}; lastIdx = -1; store();
+    $('#confirmReset').hidden = true; render(); say('Scans cleared', 'part');
+  };
+
+  // ---------- rendering ----------
+  document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => {
+    filter = b.dataset.f;
+    document.querySelectorAll('[data-f]').forEach(x => x.classList.toggle('on', x === b));
+    render();
+  });
+  $('#search').addEventListener('input', () => render());
+  $('#search').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') { e.target.blur(); lock(); } });
+
+  function render(scrollToLast) {
+    if (!rows.length) return;
+    const q = $('#search').value.toLowerCase();
+    let totNeed = 0, totDone = 0, linesDone = 0;
+    rows.forEach((_, i) => { totNeed += need(i); totDone += Math.min(counts[i], need(i)); if (counts[i] >= need(i)) linesDone++; });
+    const unk = Object.values(unknown).reduce((a,b)=>a+b,0);
+    $('#stats').innerHTML = `<span>Lines <b>${linesDone} / ${rows.length}</b></span><span>Units <b>${totDone} / ${totNeed}</b></span>`
+      + (unk ? `<span style="color:var(--bad-ink)">Wrong scans <b>${unk}</b></span>` : '');
+    $('#bar').style.width = (totNeed ? 100 * totDone / totNeed : 0) + '%';
+    if (totNeed && totDone === totNeed && rows.every((_, i) => counts[i] === need(i))) {
+      $('#msg').textContent = '✓ ORDER COMPLETE — all ' + totNeed + ' units scanned'; $('#msg').className = 'ok';
+    }
+
+    // key columns first, then the rest of the file's columns (hidden on phones)
+    const key = [map.name, map.ean].filter(c => c >= 0);
+    const rest = headers.map((_, i) => i).filter(c => !key.includes(c) && c !== map.qty
+      && rows.some(r => r[c] !== '' && r[c] !== null));
+    let html = '<table><thead><tr><th>Scanned</th>' + key.map(c => `<th>${esc(headers[c])}</th>`).join('')
+      + rest.map(c => `<th class="extra">${esc(headers[c])}</th>`).join('') + '</tr></thead><tbody>';
+    rows.forEach((r, i) => {
+      const st = status(i);
+      if (filter === 'todo' && st !== 'todo') return;
+      if (filter === 'part' && st !== 'part') return;
+      if (filter === 'done' && st !== 'done' && st !== 'over') return;
+      if (q && !r.map(showEan).join(' ').toLowerCase().includes(q)) return;
+      html += `<tr id="r${i}" class="${st === 'todo' ? '' : st}${i === lastIdx ? ' last' : ''}">
+        <td class="cnt"><button class="mini" data-m="${i}" aria-label="minus one">−</button><b>${counts[i]} / ${need(i)}</b><button class="mini" data-p="${i}" aria-label="plus one">+</button></td>`
+        + key.map(c => c === map.ean ? `<td class="ean">${esc(showEan(r[c]))}</td>` : `<td>${esc(r[c])}</td>`).join('')
+        + rest.map(c => `<td class="extra${typeof r[c] === 'number' ? ' num' : ''}">${esc(r[c])}</td>`).join('') + '</tr>';
+    });
+    html += '</tbody></table>';
+    $('#tablewrap').className = 'tablewrap';
+    $('#tablewrap').innerHTML = html;
+    document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { const i = +b.dataset.p; counts[i]++; history.push(i); lastIdx = i; store(); render(); });
+    document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { const i = +b.dataset.m; counts[i] = Math.max(0, counts[i]-1); lastIdx = i; store(); render(); });
+
+    const u = Object.entries(unknown);
+    $('#unknown').innerHTML = u.length ? 'Scanned but not in this order: ' + u.map(([k,v]) => `<span style="font-family:var(--mono)">${esc(k)}</span> ×${v}`).join(', ') : '';
+    if (scrollToLast && lastIdx >= 0) { const el = document.getElementById('r' + lastIdx); el && el.scrollIntoView({block:'center'}); }
+  }
+
+  // ---------- export ----------
+  $('#export').onclick = async () => {
+    if (!rows.length) return;
+    const out = [['Scanned', 'Status', ...headers]];
+    rows.forEach((r, i) => {
+      const st = {todo:'TO DO', part:'PARTIAL', done:'DONE', over:'TOO MANY'}[status(i)];
+      out.push([counts[i], st, ...r.map((v, c) => c === map.ean ? showEan(v) : v)]);
+    });
+    Object.entries(unknown).forEach(([k, v]) => out.push([v, 'NOT IN ORDER', ...headers.map((_, c) => c === map.ean ? k : '')]));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(out), 'Scanned');
+    const fn = fileName.replace(/\.(xlsx|xls|csv)$/i, '') + '_SCANNED.xlsx';
+    // inside the Claude viewer, files go through the downloads capability; a normal browser saves directly
+    const dl = window.claude && window.claude.use ? await window.claude.use('downloads').catch(() => null) : null;
+    if (dl) {
+      try { await dl.save({filename: fn, data: XLSX.write(wb, {type:'array', bookType:'xlsx'})}); say('Saved ' + fn, 'ok'); }
+      catch(e) { if (e && e.code !== 'declined') say('Export not available here: ' + (e.message || e.code), 'bad'); }
+    } else {
+      XLSX.writeFile(wb, fn);
+    }
+    lock();
+  };
+})();
+</script>
