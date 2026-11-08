@@ -1,8 +1,8 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Qogita Pack Scanner</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f6b5c'/%3E%3Ctext x='16' y='23' font-family='Arial' font-weight='700' font-size='21' fill='white' text-anchor='middle'%3EQ%3C/text%3E%3C/svg%3E">
+<title>Qogita Orders Fulfilment Scanner</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300d68f'/%3E%3Cstop offset='.55' stop-color='%2300b4d8'/%3E%3Cstop offset='1' stop-color='%233a6bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ctext x='16' y='23' font-family='Arial' font-weight='700' font-size='21' fill='white' text-anchor='middle'%3EQ%3C/text%3E%3C/svg%3E">
 <script>if (/^FBA/.test(document.title)) document.documentElement.classList.add('amz');</script>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -158,10 +158,9 @@
   /* ---------- colour layout ---------- */
   header{border-bottom:4px solid var(--brandline);box-shadow:0 2px 10px rgba(0,0,0,.06)}
   h1{color:var(--accent);display:flex;align-items:center;gap:8px}
-  h1::before{content:"Q";display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:var(--logo-bg);color:var(--logo-ink);font:800 20px/1 var(--sans);flex:none;box-shadow:inset 0 -3px 0 rgba(0,0,0,.18)}
-  :root.amz h1::before{content:"A";box-shadow:inset 0 -4px 0 var(--amz)}
-  @media (prefers-color-scheme: dark){ :root.amz:not([data-theme="light"]) h1::before{box-shadow:inset 0 -4px 0 #131921} }
-  :root.amz[data-theme="dark"] h1::before{box-shadow:inset 0 -4px 0 #131921}
+  /* logos: Qogita = mint-to-blue gradient tile with white Q; Amazon = orange-to-red gradient tile with navy A */
+  h1::before{content:"Q";display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#00d68f 0%,#00b4d8 55%,#3a6bff 100%);color:#ffffff;font:800 21px/1 var(--sans);flex:none;text-shadow:0 1px 2px rgba(0,0,0,.25);box-shadow:0 3px 10px rgba(0,180,216,.45),inset 0 -3px 0 rgba(0,0,0,.15);transform:rotate(-6deg)}
+  :root.amz h1::before{content:"A";background:linear-gradient(135deg,#ffc400 0%,#ff9900 45%,#ff4d1f 100%);color:#131921;text-shadow:0 1px 0 rgba(255,255,255,.35);box-shadow:0 3px 10px rgba(255,120,0,.5),inset 0 -3px 0 rgba(0,0,0,.15)}
   h1 small{color:var(--fg);font-weight:700}
   #manifest,#boxexport{background:var(--amz);border-color:var(--amz);color:var(--amz-ink);font-weight:700}
   #manifest:hover,#boxexport:hover{filter:brightness(1.06);border-color:var(--amz-ink)}
@@ -264,7 +263,7 @@
 
 <header class="pad">
   <div class="top">
-    <h1>Qogita Pack Scanner<small id="fname"></small></h1>
+    <h1>Qogita Orders Fulfilment Scanner<small id="fname"></small></h1>
     <div class="tools">
       <label class="btn">Open order file<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
       <button id="undo" title="Undo last scan (F2)">Undo last</button>
