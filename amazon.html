@@ -278,7 +278,7 @@
   <div class="top">
     <h1>FBA Pack Scanner<small id="fname"></small></h1>
     <div class="tools">
-      <label class="btn">Open order file<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
+      <label class="btn">Load products file<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
       <button id="undo" title="Undo last scan (F2)">Undo last</button>
       <button id="photoBtn" title="Take a photo of the barcode — works on every phone">Photo</button>
       <input id="photo" type="file" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;left:-9999px" tabindex="-1" aria-hidden="true">
@@ -1631,7 +1631,7 @@
             // a shipment sheet (pasted products + "total labeled") loaded with the wrong button: open it as the shipment
             const isShip = wb.SheetNames.some(n => { const a = XLSX.utils.sheet_to_json(wb.Sheets[n], {header: 1, raw: true, defval: ''}); return amazonParse(a) || eanParse(a); });
             if (isShip) { readFile(file); return; }
-            say('This is not a product list (needs SKU / FNSKU columns). To pack a shipment sheet use "Open order file".', 'bad'); return;
+            say('This is not a product list (needs SKU / FNSKU columns). To pack a shipment sheet use "Load products file".', 'bad'); return;
           }
           const before = catalog.length;
           aoa.slice(1).forEach(r => catRemember({sku: String(r[ix('SKU')] || '').trim(), fnsku: String(r[ix('FNSKU')] || '').trim(),

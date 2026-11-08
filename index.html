@@ -1631,7 +1631,7 @@
             // a shipment sheet (pasted products + "total labeled") loaded with the wrong button: open it as the shipment
             const isShip = wb.SheetNames.some(n => { const a = XLSX.utils.sheet_to_json(wb.Sheets[n], {header: 1, raw: true, defval: ''}); return amazonParse(a) || eanParse(a); });
             if (isShip) { readFile(file); return; }
-            say('This is not a product list (needs SKU / FNSKU columns). To pack a shipment sheet use "Open order file".', 'bad'); return;
+            say('This is not a product list (needs SKU / FNSKU columns). To pack a shipment sheet use "Load products file".', 'bad'); return;
           }
           const before = catalog.length;
           aoa.slice(1).forEach(r => catRemember({sku: String(r[ix('SKU')] || '').trim(), fnsku: String(r[ix('FNSKU')] || '').trim(),
