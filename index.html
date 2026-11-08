@@ -14,17 +14,22 @@
     --bg:#f2f4f3; --card:#ffffff; --fg:#17201c; --mute:#5d6b65; --line:#d6ddd9; --head:#e7ecea;
     --accent:#0f6b5c; --accent-soft:#dff1ec;
     --ok:#cdeed3; --ok-ink:#17702f; --part:#fdf0bd; --part-ink:#8a6400; --bad:#ffd9d6; --bad-ink:#b3261e;
+    /* box colours (Box 1 blue, 2 purple, 3 orange, 4 teal, 5 pink, 6 green, 7 indigo, 8 brown) + Amazon orange */
+    --b1:#2563eb; --b2:#9333ea; --b3:#ea580c; --b4:#0e8a9e; --b5:#db2777; --b6:#4d8a12; --b7:#4f46e5; --b8:#a16207; --on-bx:#ffffff;
+    --amz:#ff9900; --amz-ink:#1f1300;
     --sans:"IBM Plex Sans", "Segoe UI", system-ui, Arial, sans-serif;
     --mono:"IBM Plex Mono", Consolas, "Courier New", monospace;
   }
   @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
     --bg:#121715; --card:#1a211e; --fg:#e6ece9; --mute:#93a39c; --line:#2d3833; --head:#222b27;
     --accent:#4fc2a8; --accent-soft:#183a32;
-    --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92; color-scheme:dark }}
+    --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92;
+    --b1:#6ea2ff; --b2:#c58cff; --b3:#ff9b5c; --b4:#3fd0e0; --b5:#ff7ab8; --b6:#9fdc5a; --b7:#9a94ff; --b8:#e0b04a; --on-bx:#0b0f0d; color-scheme:dark }}
   :root[data-theme="dark"]{
     --bg:#121715; --card:#1a211e; --fg:#e6ece9; --mute:#93a39c; --line:#2d3833; --head:#222b27;
     --accent:#4fc2a8; --accent-soft:#183a32;
-    --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92; color-scheme:dark }
+    --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92;
+    --b1:#6ea2ff; --b2:#c58cff; --b3:#ff9b5c; --b4:#3fd0e0; --b5:#ff7ab8; --b6:#9fdc5a; --b7:#9a94ff; --b8:#e0b04a; --on-bx:#0b0f0d; color-scheme:dark }
   *{box-sizing:border-box}
   [hidden]{display:none!important}
   html,body{margin:0}
@@ -141,6 +146,71 @@
   .exp{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--mute);margin-top:4px}
   .expin{font:12px var(--sans);padding:2px 4px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
   .subinfo{display:block;font:500 12px var(--mono);color:var(--accent);margin-top:2px}
+
+  /* ---------- colour layout ---------- */
+  header{border-bottom:4px solid var(--accent);box-shadow:0 2px 10px rgba(0,0,0,.06)}
+  h1{color:var(--accent);display:flex;align-items:center;gap:8px}
+  h1::before{content:"";width:12px;height:22px;border-radius:3px;background:linear-gradient(var(--accent) 0 50%,var(--amz) 50% 100%);flex:none}
+  h1 small{color:var(--fg);font-weight:700}
+  #manifest,#boxexport{background:var(--amz);border-color:var(--amz);color:var(--amz-ink);font-weight:700}
+  #manifest:hover,#boxexport:hover{filter:brightness(1.06);border-color:var(--amz-ink)}
+  #scan{border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
+  #scan:focus{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+  #msg{padding:6px 12px;border-radius:10px;border-left:6px solid transparent}
+  #msg:empty{padding:0;border:0;min-height:0}
+  #msg.ok{background:var(--ok);border-left-color:var(--ok-ink)}
+  #msg.part{background:var(--part);border-left-color:var(--part-ink)}
+  #msg.bad{background:var(--bad);border-left-color:var(--bad-ink)}
+  .bar{height:10px;border-radius:5px}
+  .bar>div{background:linear-gradient(90deg,var(--accent),var(--ok-ink))}
+  /* box tabs: each box in its own colour; the one you pack is filled */
+  #boxbar{gap:8px}
+  #boxbar>b{font-size:15px}
+  #boxbar .bx{border:2px solid var(--bx);color:var(--bx);background:color-mix(in srgb,var(--bx) 8%,var(--card));font-weight:700;padding:7px 14px;border-radius:10px}
+  #boxbar .bx small{display:block;font-size:11px;font-weight:600;opacity:.85;margin:0}
+  #boxbar .bx.on{background:var(--bx);color:var(--on-bx);border-color:var(--bx);box-shadow:0 0 0 3px color-mix(in srgb,var(--bx) 30%,transparent)}
+  #boxbar .bx.done{border-style:dashed;color:var(--bx);background:color-mix(in srgb,var(--bx) 14%,var(--card))}
+  #boxbar .bx.done.on{background:var(--bx);color:var(--on-bx);border-style:solid}
+  /* the open box */
+  #boxview{border:3px solid var(--bx,var(--accent));background:color-mix(in srgb,var(--bx,var(--accent)) 6%,var(--card));box-shadow:0 3px 14px color-mix(in srgb,var(--bx,var(--accent)) 18%,transparent)}
+  #boxview .bvhead b{color:var(--bx,var(--accent));font-size:22px}
+  #boxview .bvhead button.primary{background:var(--bx,var(--accent));border-color:var(--bx,var(--accent));color:var(--on-bx)}
+  #boxview #boxmanifest{background:var(--amz);border-color:var(--amz);color:var(--amz-ink)}
+  #boxview.locked{border-style:dashed;border-color:var(--bx,var(--ok-ink));background:color-mix(in srgb,var(--ok) 55%,var(--card))}
+  .bvqty:focus{border-color:var(--bx,var(--accent))}
+  #qtyask{border-color:var(--bx,var(--accent));background:color-mix(in srgb,var(--bx,var(--accent)) 12%,var(--card))}
+  #qtybox{color:var(--bx,var(--accent))}
+  #boxqty{border-color:var(--bx,var(--accent))}
+  /* plan lines: coloured stripe on the left = status, box badges in the box colour */
+  table.amz tbody td:first-child,table:not(.bvt) tbody td:first-child{border-left:6px solid var(--line)}
+  tr.part td:first-child{border-left-color:var(--part-ink)!important}
+  tr.done td:first-child{border-left-color:var(--ok-ink)!important}
+  tr.over td:first-child{border-left-color:var(--bad-ink)!important}
+  th{background:color-mix(in srgb,var(--accent) 10%,var(--card));color:var(--accent)}
+  .pbox{background:color-mix(in srgb,var(--bx,var(--mute)) 14%,var(--card));color:var(--bx,var(--mute));border:1px solid var(--bx,var(--line));font-size:12px;padding:1px 8px}
+  .pbox.cur{background:var(--bx);color:var(--on-bx)}
+  .pbox.done{border-style:dashed}
+  .addto{background:var(--bx,var(--accent));color:var(--on-bx)}
+  #planhead{color:var(--fg);font-weight:700;border-left:5px solid var(--accent);padding-left:10px}
+  #addbox{border-left:6px solid var(--accent);background:color-mix(in srgb,var(--accent) 4%,var(--card))}
+  .filters button.on{background:var(--accent);color:var(--on-bx);border-color:var(--accent)}
+  /* left column of the plan: big "still to pack" badge, then the buttons on one line */
+  table.amz td.cnt{width:1%;min-width:180px}
+  table.amz td.cnt b{display:inline-block;min-width:54px;padding:2px 10px;border-radius:999px;background:var(--head);font-size:19px;text-align:center}
+  tr.part td.cnt b{background:color-mix(in srgb,var(--part-ink) 22%,var(--card))}
+  tr.done td.cnt b{background:var(--ok-ink);color:var(--card)!important}
+  tr.over td.cnt b,table.amz td.cnt b.neg{background:var(--bad-ink);color:var(--card)!important}
+  table.amz small.left{text-align:left;margin:3px 0 0 2px;font-size:12px}
+  .rowact{display:flex;gap:6px;align-items:center;margin-top:6px}
+  .rowact .addto{display:inline-block;margin:0;padding:4px 12px}
+  .rowact .rowtools{margin:0;display:flex;gap:4px}
+  .rowact .mini{padding:2px 8px;font-size:13px}
+  table.amz td.pname{font-weight:600;font-size:15px}
+  table.amz td.pname .eansub,table.amz td.pname .subinfo{font-weight:500}
+  table.bvt td:nth-child(2){width:100%;font-weight:600}
+  table.bvt td.cnt{white-space:nowrap}
+  #boxview tr.last td{box-shadow:inset 0 2px 0 var(--bx,var(--accent)),inset 0 -2px 0 var(--bx,var(--accent))}
+  #unknown:not(:empty){background:var(--bad);border-left:6px solid var(--bad-ink);padding:6px 10px;border-radius:8px}
   .eansub{display:none;font:500 12px var(--mono);color:var(--mute);margin-top:2px}
   @media (max-width:700px){ .eancol{display:none} .eansub{display:block} }
   @media (max-width:700px){
@@ -302,6 +372,8 @@
   const AMZ = /^FBA/.test(document.title);
   const AMZ_HEADERS = ['name', 'Brand', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes', 'Other EANs'];
   let boxes = [], curBox = 1, nBoxes = 1;   // boxes[i] = {boxNumber: units}
+  // every box has its own colour (tab, open-box panel, badges on plan lines, Add buttons): --b1 … --b8, then repeats
+  const bxc = b => `--bx:var(--b${(b - 1) % 8 + 1})`;
   let doneBoxes = {};                        // {boxNumber: true} once a box is completed (closed)
   const DIM_DEFAULT = {l: 60, w: 40, h: 30, kg: 15};   // Orlando's standard carton
   let dims = {...DIM_DEFAULT};
@@ -962,7 +1034,7 @@
       const phone = `<span class="eansub">${esc([brand, showEan(val(r, cEan)), val(r, cFn)].filter(Boolean).join(' · '))}</span>`;
       const plan = map.boxes >= 0 && r[map.boxes] ? `<span class="subinfo">plan ${esc(r[map.boxes])}</span>` : '';
       const packed = Object.entries(boxes[i] || {}).filter(([, n]) => n > 0)
-        .map(([b, n]) => `<span class="pbox${+b === curBox ? ' cur' : ''}">Box ${b}: ${n}</span>`).join('');
+        .map(([b, n]) => `<span class="pbox${+b === curBox ? ' cur' : ''}${doneBoxes[b] ? ' done' : ''}" style="${bxc(+b)}">${doneBoxes[b] ? '✓ ' : ''}Box ${b}: ${n}</span>`).join('');
       html += `<tr id="r${i}" class="${st === 'todo' ? '' : st}${i === lastIdx ? ' last' : ''}">
         <td class="cnt">${(() => {
           if (!nBoxes) return `<b>${need(i)}</b><small class="left">planned</small>`;
@@ -973,7 +1045,7 @@
           const rest = need(i) - doneU;
           const openTxt = openE.map(([b, n]) => `${n} in Box ${b}`).join(', ');
           return `<b class="${rest < 0 ? 'neg' : ''}">${rest}</b><small class="left">of ${need(i)} planned${openU ? ` · ${openTxt} now` : ''}${rest - openU === 0 && rest >= 0 && openU ? ' · all in' : ''}${rest < 0 ? ' · too many!' : ''}</small>`;
-        })()}<span class="rowtools"><button class="mini" data-q="${i}" title="Change planned quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span>${curBox && !doneBoxes[curBox] ? `<button class="addto" data-a="${i}" title="Add this product to Box ${curBox} without scanning">+ Add to Box ${curBox}</button>` : ''}</td>
+        })()}<div class="rowact">${curBox && !doneBoxes[curBox] && counts[i] < need(i) ? `<button class="addto" style="${bxc(curBox)}" data-a="${i}" title="Add this product to Box ${curBox} without scanning">+ Box ${curBox}</button>` : ''}<span class="rowtools"><button class="mini" data-q="${i}" title="Change planned quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span></div></td>
         <td class="pname">${esc(val(r, cName))}${phone}${plan}${packed ? `<span class="packed">${packed}</span>` : ''}</td>
         <td class="extra brand">${esc(brand)}</td>
         <td class="ean eancol">${esc(showEan(val(r, cEan)))}</td>
@@ -1180,6 +1252,7 @@
     lastIdx = i;
     $('#qtyprod').textContent = `${label(i)} — ${need(i) - counts[i]} of ${need(i)} still to pack`;
     $('#qtybox').textContent = 'Box ' + curBox;
+    $('#qtyask').style.cssText = bxc(curBox);
     $('#qtyask').hidden = false;
     const inp = $('#boxqty'); inp.value = need(i) - counts[i];
     $('#msg').textContent = ''; $('#msg').className = '';
@@ -1227,7 +1300,7 @@
            <button id="newbox" class="primary">Start packing</button>`;
     } else {
       h = '<b>Boxes:</b>';
-      for (let b = 1; b <= nBoxes; b++) h += `<button class="bx${b === curBox ? ' on' : ''}${doneBoxes[b] ? ' done' : ''}" data-box="${b}">${doneBoxes[b] ? '✓ ' : ''}Box ${b}<small>${boxUnits(b)}</small></button>`;
+      for (let b = 1; b <= nBoxes; b++) h += `<button class="bx${b === curBox ? ' on' : ''}${doneBoxes[b] ? ' done' : ''}" style="${bxc(b)}" data-box="${b}">${doneBoxes[b] ? '✓ ' : ''}Box ${b}<small>${boxUnits(b)} units</small></button>`;
       h += '<button id="newbox" class="primary">+ New box</button>';
     }
     bar.innerHTML = h;
@@ -1289,6 +1362,7 @@
        <td>${locked ? '' : `<button class="mini" data-bx="${i}" title="Take this product out of Box ${curBox}">✕</button>`}</td></tr>`).join('') + '</tbody></table>';
     v.innerHTML = h; v.hidden = false;
     v.classList.toggle('locked', locked);
+    v.style.cssText = bxc(curBox);
     if ($('#completebox')) $('#completebox').onclick = completeBox;
     if ($('#reopenbox')) $('#reopenbox').onclick = reopenBox;
     if ($('#boxmanifest')) $('#boxmanifest').onclick = () => exportManifest(curBox);
