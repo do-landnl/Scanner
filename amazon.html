@@ -103,6 +103,17 @@
   #shipname{width:14em;max-width:100%} #addqty{width:6em}
   #paste{width:100%;resize:vertical;font:13px var(--mono);min-width:0}
   button.primary{background:var(--accent);color:var(--card);border-color:var(--accent);font-weight:700}
+  #boxview{background:var(--card);border:3px solid var(--accent);border-radius:12px;padding:10px;display:grid;gap:6px}
+  .bvhead{display:flex;gap:10px;align-items:baseline;font-size:18px}
+  table.bvt{width:100%;border-collapse:collapse} table.bvt td{padding:5px 6px;border-bottom:1px solid var(--line)}
+  table.bvt td.cnt b{font-size:17px;display:inline-block;min-width:40px;text-align:center}
+  #planhead{margin:6px 0 0;font-size:15px;color:var(--mute)}
+  .bvhead button{margin-left:auto}
+  #boxview.locked{border-color:var(--ok-ink);background:var(--ok)}
+  #boxbar .bx.done{border-color:var(--ok-ink);color:var(--ok-ink)}
+  #boxbar .bx.done.on{background:var(--ok-ink);color:var(--card)}
+  table.amz td.cnt b{font-size:18px} table.amz td.cnt b.neg{color:var(--bad-ink)}
+  small.left{display:block;font-size:11px;color:var(--mute);text-align:center}
   #qtyask{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--accent-soft);border:2px solid var(--accent);border-radius:10px;padding:8px 10px}
   #qtyprod{font-weight:700;min-width:0;overflow-wrap:anywhere}
   #boxqty{font:700 24px var(--mono);width:5em;padding:4px 8px;border:2px solid var(--accent);border-radius:8px;background:var(--card);color:var(--fg)}
@@ -219,6 +230,7 @@
     <p class="note">Green = line complete · Yellow = partly scanned · Red = too many or not in this order</p>
   </div>
   <div id="mapbox" class="colmap" hidden></div>
+  <section id="boxview" hidden></section>
   <section id="addbox" hidden>
     <div class="addrow">
       <label>Shipment <input id="shipname" autocomplete="off"></label>
@@ -251,6 +263,7 @@
       kg <input type="number" id="dimKg" class="expin dim" min="0.1" step="0.1" aria-label="Box weight kg"></span>
   </div>
   <div id="unknown"></div>
+  <h3 id="planhead" hidden>Shipment plan</h3>
   <div id="tablewrap"></div>
 </main>
 
@@ -285,12 +298,13 @@
   const AMZ = /^FBA/.test(document.title);
   const AMZ_HEADERS = ['name', 'Brand', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes', 'Other EANs'];
   let boxes = [], curBox = 1, nBoxes = 1;   // boxes[i] = {boxNumber: units}
+  let doneBoxes = {};                        // {boxNumber: true} once a box is completed (closed)
   const DIM_DEFAULT = {l: 60, w: 40, h: 30, kg: 15};   // Orlando's standard carton
   let dims = {...DIM_DEFAULT};
   const store = () => {
     if (!fileName) return;
     const s = {counts, history, unknown, expAll};
-    if (AMZ) Object.assign(s, {kind: 'fba', boxes, curBox, nBoxes, dims, headers, rows, savedAt: Date.now()});
+    if (AMZ) Object.assign(s, {kind: 'fba', boxes, curBox, nBoxes, doneBoxes, dims, headers, rows, savedAt: Date.now()});
     try { localStorage.setItem('qps:' + fileName, JSON.stringify(s)); if (AMZ) localStorage.setItem('qps-last-fba', fileName); } catch(e){}
   };
   const load  = () => { try { return JSON.parse(localStorage.getItem('qps:' + fileName) || 'null'); } catch(e){ return null; } };
@@ -640,12 +654,13 @@
     if (saved && saved.counts && saved.counts.length === rows.length) {
       counts = saved.counts; history = saved.history || []; unknown = saved.unknown || {}; expAll = saved.expAll || EXP_DEFAULT;
       boxes = saved.boxes && saved.boxes.length === rows.length ? saved.boxes : rows.map(() => ({}));
-      curBox = saved.curBox || 1; nBoxes = saved.nBoxes || 1; dims = {...DIM_DEFAULT, ...(saved.dims || {})};
+      curBox = saved.curBox ?? 1; nBoxes = saved.nBoxes ?? 1; doneBoxes = saved.doneBoxes || {}; dims = {...DIM_DEFAULT, ...(saved.dims || {})};
       say('Resumed your scans for ' + name, 'ok');
     } else {
       counts = rows.map(() => 0); history = []; unknown = {}; expAll = EXP_DEFAULT;
-      boxes = rows.map(() => ({})); curBox = 1; nBoxes = 1; dims = {...DIM_DEFAULT};
-      say(rows.length + ' lines loaded — start scanning', 'ok');
+      // Amazon: a new shipment starts in setup (no box open); Qogita keeps one implicit "box"
+      boxes = rows.map(() => ({})); curBox = AMZ ? 0 : 1; nBoxes = AMZ ? 0 : 1; doneBoxes = {}; dims = {...DIM_DEFAULT};
+      say(rows.length + (AMZ ? ' products loaded — check the plan, then click "New box" to start packing' : ' lines loaded — start scanning'), 'ok');
     }
     lastIdx = -1;
     if (AMZ) { store(); catFromRows(); amzRefresh(); }
@@ -763,8 +778,8 @@
   $('#noReset').onclick = () => { $('#confirmReset').hidden = true; };
   $('#yesReset').onclick = () => {
     counts = rows.map(() => 0); history = []; unknown = {}; lastIdx = -1;
-    boxes = rows.map(() => ({})); curBox = 1; nBoxes = 1; store();
-    $('#confirmReset').hidden = true; render(); say('Scans cleared', 'part');
+    boxes = rows.map(() => ({})); curBox = AMZ ? 0 : 1; nBoxes = AMZ ? 0 : 1; doneBoxes = {}; store();
+    $('#confirmReset').hidden = true; render(); say(AMZ ? 'All boxes cleared — the plan is kept. Click "New box" to start packing again.' : 'Scans cleared', 'part');
   };
 
   // ---------- rendering ----------
@@ -852,8 +867,8 @@
     const col = k => headers.findIndex(h => h.toUpperCase() === k);
     const cName = map.name, cEan = map.ean, cAsin = col('ASIN'), cSku = col('SKU'), cFn = map.fnsku;
     const val = (r, c) => c >= 0 && r[c] !== null && r[c] !== undefined ? String(r[c]) : '';
-    let html = '<table class="amz"><thead><tr><th>Packed</th><th>Product</th><th class="extra">Brand</th><th class="eancol">EAN</th>'
-      + '<th class="extra">ASIN</th><th class="extra">SKU</th><th class="extra">FNSKU</th></tr></thead><tbody>';
+    let html = `<table class="amz"><thead><tr><th>${nBoxes ? 'Still to pack' : 'Planned'}</th><th>Product</th><th class="extra">Brand</th><th class="eancol">EAN</th>'
+      + '<th class="extra">ASIN</th><th class="extra">SKU</th><th class="extra">FNSKU</th></tr></thead><tbody>`;
     rows.forEach((r, i) => {
       const st = status(i);
       if (filter === 'todo' && st !== 'todo') return;
@@ -869,7 +884,14 @@
       const packed = Object.entries(boxes[i] || {}).filter(([, n]) => n > 0)
         .map(([b, n]) => `<span class="pbox${+b === curBox ? ' cur' : ''}">Box ${b}: ${n}</span>`).join('');
       html += `<tr id="r${i}" class="${st === 'todo' ? '' : st}${i === lastIdx ? ' last' : ''}">
-        <td class="cnt"><button class="mini" data-m="${i}" aria-label="minus one">−</button><b>${counts[i]} / ${need(i)}</b><button class="mini" data-p="${i}" aria-label="plus one">+</button><span class="rowtools"><button class="mini" data-q="${i}" title="Change quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span></td>
+        <td class="cnt">${(() => {
+          if (!nBoxes) return `<b>${need(i)}</b><small class="left">planned</small>`;
+          // completed boxes are deducted from the plan; the open box shows separately
+          const doneU = Object.entries(boxes[i] || {}).filter(([b]) => doneBoxes[b]).reduce((s, [, n]) => s + n, 0);
+          const openU = curBox && !doneBoxes[curBox] ? (boxes[i] || {})[curBox] || 0 : 0;
+          const rest = need(i) - doneU;
+          return `<b class="${rest < 0 ? 'neg' : ''}">${rest}</b><small class="left">of ${need(i)} planned${openU ? ` · ${openU} in Box ${curBox} now` : ''}${rest - openU === 0 && rest >= 0 && openU ? ' · all in' : ''}${rest < 0 ? ' · too many!' : ''}</small>`;
+        })()}<span class="rowtools"><button class="mini" data-q="${i}" title="Change planned quantity (labels printed)">✎</button><button class="mini" data-x="${i}" title="Remove from shipment">✕</button></span></td>
         <td class="pname">${esc(val(r, cName))}${phone}${plan}${packed ? `<span class="packed">${packed}</span>` : ''}</td>
         <td class="extra brand">${esc(brand)}</td>
         <td class="ean eancol">${esc(showEan(val(r, cEan)))}</td>
@@ -1055,6 +1077,13 @@
   let pending = null;   // {i} while the quantity box is open
   function amzScan(hits) {
     if (pending) commitQty(null);   // scanning the next item confirms the previous one with its pre-filled amount
+    if (!curBox || doneBoxes[curBox]) {
+      // no open box (setup, or the last box was completed): a scan only finds the product in the plan
+      lastIdx = hits[0];
+      const left = Math.max(0, need(hits[0]) - counts[hits[0]]);
+      say(`In the plan: ${label(hits[0])} — ${left} of ${need(hits[0])} still to pack. Click "${nBoxes ? '+ New box' : 'Start packing: New box'}" to pack it.`, 'part'); beep(true);
+      render(true); return;
+    }
     const i = hits.find(h => counts[h] < need(h));
     if (i === undefined) {
       lastIdx = hits[0];
@@ -1101,13 +1130,75 @@
   function renderBoxBar() {
     const bar = $('#boxbar');
     bar.hidden = !AMZ || !rows.length;
+    renderBoxView();
     if (bar.hidden) return;
-    let h = '<b>Packing:</b>';
-    for (let b = 1; b <= nBoxes; b++) h += `<button class="bx${b === curBox ? ' on' : ''}" data-box="${b}">Box ${b}<small>${boxUnits(b)}</small></button>`;
-    h += '<button id="newbox">+ New box</button>';
+    let h;
+    if (!nBoxes) {
+      // setup phase: the plan is being built, no box yet
+      const units = rows.reduce((s, _, i) => s + need(i), 0);
+      h = `<b>Setup:</b> <span class="note">${rows.length} products · ${units} units planned. When the plan is ready:</span>
+           <button id="newbox" class="primary">Start packing: New box</button>`;
+    } else {
+      h = '<b>Boxes:</b>';
+      for (let b = 1; b <= nBoxes; b++) h += `<button class="bx${b === curBox ? ' on' : ''}${doneBoxes[b] ? ' done' : ''}" data-box="${b}">${doneBoxes[b] ? '✓ ' : ''}Box ${b}<small>${boxUnits(b)}</small></button>`;
+      h += '<button id="newbox" class="primary">+ New box</button>';
+    }
     bar.innerHTML = h;
-    bar.querySelectorAll('[data-box]').forEach(x => x.onclick = () => { if (pending) commitQty(null); curBox = +x.dataset.box; store(); render(); say(`Packing Box ${curBox} — scan the products for this box`, 'ok'); });
-    $('#newbox').onclick = () => { if (pending) commitQty(null); nBoxes++; curBox = nBoxes; store(); render(); say(`Box ${curBox} started — scan the products for this box`, 'ok'); };
+    bar.querySelectorAll('[data-box]').forEach(x => x.onclick = () => {
+      if (pending) commitQty(null); curBox = +x.dataset.box; store(); render();
+      say(doneBoxes[curBox] ? `Box ${curBox} is completed — click "Reopen" to change it` : `Packing Box ${curBox} — scan the products for this box`, doneBoxes[curBox] ? 'part' : 'ok');
+    });
+    $('#newbox').onclick = () => {
+      if (pending) commitQty(null);
+      // starting the next box closes the open one (if anything is in it)
+      const prev = curBox && !doneBoxes[curBox] && boxUnits(curBox) ? curBox : 0;
+      if (prev) doneBoxes[prev] = true;
+      nBoxes++; curBox = nBoxes; store(); render();
+      say((prev ? `Box ${prev} completed (${boxUnits(prev)} units). ` : '') + `Box ${curBox} started — scan the products for this box`, 'ok');
+    };
+  }
+  function completeBox() {
+    if (!curBox || doneBoxes[curBox]) return;
+    if (pending) commitQty(null);
+    if (!boxUnits(curBox)) { say(`Box ${curBox} is empty — scan products into it first`, 'bad'); beep(false); return; }
+    doneBoxes[curBox] = true;
+    const b = curBox, u = boxUnits(b);
+    curBox = 0; store(); render();
+    const left = rows.reduce((s, _, i) => s + Math.max(0, need(i) - counts[i]), 0);
+    say(`✓ Box ${b} completed: ${u} units. ${left ? left + ' units left in the plan — click "+ New box" for the next box.' : 'Everything is packed — make the Amazon manifest.'}`, 'ok'); beep(true);
+    lock();
+  }
+  function reopenBox() {
+    if (!curBox || !doneBoxes[curBox]) return;
+    delete doneBoxes[curBox]; store(); render(); say(`Box ${curBox} reopened — scan or use − / + to change it`, 'part'); lock();
+  }
+  // the open box: what is in it, with − / + per product (the plan stays visible below)
+  function renderBoxView() {
+    const v = $('#boxview'), ph = $('#planhead');
+    if (!AMZ || !rows.length) { v.hidden = true; ph.hidden = true; return; }
+    const planned = rows.reduce((s, _, i) => s + need(i), 0), packed = counts.reduce((s, n) => s + n, 0);
+    ph.hidden = false;
+    const inDone = rows.reduce((s, _, i) => s + Object.entries(boxes[i] || {}).filter(([b]) => doneBoxes[b]).reduce((a, [, n]) => a + n, 0), 0);
+    const nDone = Object.keys(doneBoxes).filter(b => doneBoxes[b]).length;
+    ph.textContent = nBoxes ? `Shipment plan — ${planned - inDone} of ${planned} units still to pack (${nDone} box${nDone === 1 ? '' : 'es'} completed${packed > inDone ? `, ${packed - inDone} in the open box` : ''})`
+                            : `Shipment plan (setup) — ${rows.length} products, ${planned} units`;
+    if (!curBox) { v.hidden = true; return; }
+    const locked = !!doneBoxes[curBox];
+    const items = rows.map((r, i) => [i, (boxes[i] || {})[curBox] || 0]).filter(([, n]) => n > 0);
+    let h = `<div class="bvhead"><b>${locked ? '✓ ' : ''}Box ${curBox}</b><span class="note">${items.length} product${items.length === 1 ? '' : 's'} · ${boxUnits(curBox)} units${locked ? ' · completed' : ''}</span>
+      ${locked ? '<button id="reopenbox">Reopen box</button>' : `<button id="completebox" class="primary">✓ Complete Box ${curBox}</button>`}</div>`;
+    if (!items.length) h += `<p class="note">Box ${curBox} is empty — scan the first product that goes into this box.</p>`;
+    else h += '<table class="bvt"><tbody>' + items.map(([i, n]) =>
+      `<tr${i === lastIdx ? ' class="last"' : ''}><td class="cnt">${locked ? `<b>${n}</b>` : `<button class="mini" data-bm="${i}" aria-label="one less in this box">−</button><b>${n}</b><button class="mini" data-bp="${i}" aria-label="one more in this box">+</button>`}</td>
+       <td>${esc(label(i))}<span class="subinfo">${esc(map.fnsku >= 0 ? rows[i][map.fnsku] || '' : '')}</span></td>
+       <td>${locked ? '' : `<button class="mini" data-bx="${i}" title="Take this product out of Box ${curBox}">✕</button>`}</td></tr>`).join('') + '</tbody></table>';
+    v.innerHTML = h; v.hidden = false;
+    v.classList.toggle('locked', locked);
+    if ($('#completebox')) $('#completebox').onclick = completeBox;
+    if ($('#reopenbox')) $('#reopenbox').onclick = reopenBox;
+    v.querySelectorAll('[data-bp]').forEach(b => b.onclick = () => { const i = +b.dataset.bp; setBox(i, curBox, (boxes[i][curBox] || 0) + 1); render(); });
+    v.querySelectorAll('[data-bm]').forEach(b => b.onclick = () => { const i = +b.dataset.bm; setBox(i, curBox, (boxes[i][curBox] || 0) - 1); render(); });
+    v.querySelectorAll('[data-bx]').forEach(b => b.onclick = () => { const i = +b.dataset.bx; setBox(i, curBox, 0); render(); say(`${label(i)} taken out of Box ${curBox}`, 'part'); });
   }
   function amzEditQty(i) {
     const v = prompt(`Labels printed / units to send for:\n${label(i)}`, need(i));
@@ -1150,7 +1241,7 @@
   }
   function amzStartEmpty(name) {
     headers = AMZ_HEADERS.slice(); rows = []; counts = []; boxes = []; history = []; unknown = {};
-    curBox = 1; nBoxes = 1; expAll = EXP_DEFAULT; dims = {...DIM_DEFAULT}; lastIdx = -1; fileName = name;
+    curBox = 0; nBoxes = 0; doneBoxes = {}; expAll = EXP_DEFAULT; dims = {...DIM_DEFAULT}; lastIdx = -1; fileName = name;
     autoMap(); $('#expAll').value = expAll;
     drop.hidden = true; $('#filters').hidden = true; $('#mapbox').hidden = true;
     amzRefresh(); render();
