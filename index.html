@@ -6,7 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/barcode-detector@2.3.1/dist/iife/pure.js"></script>
 <style>
   /* Layout: sticky scan console on top (the only thing the packer looks at), order lines below as a pick list. */
   :root{
@@ -100,7 +100,8 @@
     <div class="tools">
       <label class="btn">Open order file<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
       <button id="undo" title="Undo last scan (F2)">Undo last</button>
-      <label class="btn" id="photoBtn" title="Take a photo of the barcode — works on every phone">Photo<input id="photo" type="file" accept="image/*" capture="environment" hidden></label>
+      <button id="photoBtn" title="Take a photo of the barcode — works on every phone">Photo</button>
+      <input id="photo" type="file" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;left:-9999px" tabindex="-1" aria-hidden="true">
       <button id="camBtn" title="Live camera scanning">Camera</button>
       <button id="kbd" title="Show the on-screen keyboard to type a barcode by hand">Keyboard</button>
       <button id="export">Export Excel</button>
@@ -164,9 +165,18 @@
   const load  = () => { try { return JSON.parse(localStorage.getItem('qps:' + fileName) || 'null'); } catch(e){ return null; } };
 
   let actx;
+  // iPhone only allows sound after a tap: unlock the audio on the first touch/click
+  const unlockAudio = () => {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+    } catch(e) {}
+  };
+  ['touchend','click'].forEach(t => document.addEventListener(t, unlockAudio, {passive: true}));
   const beep = ok => {
     try {
       actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
       const o = actx.createOscillator(), g = actx.createGain();
       o.frequency.value = ok ? 1100 : 220; o.type = ok ? 'sine' : 'square';
       g.gain.value = 0.15; o.connect(g); g.connect(actx.destination);
@@ -184,7 +194,7 @@
   // Only the filter box and the column dropdowns may take focus away (while you use them).
   const mayHoldFocus = el => el && (el.id === 'search' || el.tagName === 'SELECT');
   const lock = () => {
-    if (typeof camOn !== 'undefined' && camOn) return;   // camera scanning: leave focus alone
+    if (camOn || picking) return;   // camera on or photo being taken: leave focus alone
     const a = document.activeElement;
     if (a !== scan && !mayHoldFocus(a)) scan.focus({preventScroll:true});
     paintReady();
@@ -219,12 +229,27 @@
   };
 
   // ---------- camera scanning (phone / tablet / webcam) ----------
-  // Two engines: the phone's built-in barcode reader (Android Chrome — fast and accurate),
-  // otherwise the ZXing reader inside html5-qrcode (iPhone/iPad Safari, some PCs). Both get an HD feed + autofocus.
-  let camOn = false, lastCode = '', lastAt = 0, stream = null, video = null, loopTimer = null, h5 = null;
+  // Reader: the phone's built-in BarcodeDetector (Android Chrome) or, where missing (iPhone/iPad, Windows),
+  // the ZXing-C++ reader from the barcode-detector package — same API, much stronger than the old JS reader.
+  const FORMATS = ['ean_13','ean_8','upc_a','upc_e','code_128','itf'];
+  let detector = null;
+  async function getDetector() {
+    if (detector) return detector;
+    try {
+      if ('BarcodeDetector' in window) {
+        const f = await window.BarcodeDetector.getSupportedFormats();
+        if (f.includes('ean_13')) return detector = new window.BarcodeDetector({formats: FORMATS.filter(x => f.includes(x))});
+      }
+    } catch(e) {}
+    const API = window.BarcodeDetectionAPI;
+    if (API && API.BarcodeDetector) return detector = new API.BarcodeDetector({formats: FORMATS});
+    throw new Error('The barcode reader did not load. Check the internet connection and refresh the page.');
+  }
+
+  let camOn = false, picking = false, lastCode = '', lastAt = 0, stream = null, video = null, loopTimer = null;
   let facing = 'environment', torchOn = false;
   const camMsg = t => { $('#camnote').textContent = t; };
-  const HD = {width: {ideal: 1920}, height: {ideal: 1080}};
+  const crop = document.createElement('canvas');
 
   function onCode(text) {
     text = String(text).trim();
@@ -233,136 +258,125 @@
     if ((text === lastCode && now - lastAt < 1500) || now - lastAt < 700) { if (text === lastCode) lastAt = now; return; }
     lastCode = text; lastAt = now;
     camMsg('Read: ' + text);
+    try { navigator.vibrate && navigator.vibrate(60); } catch(e) {}
     handle(text);
   }
 
   async function tuneTrack(track) {
     try {
       const caps = track.getCapabilities ? track.getCapabilities() : {};
-      const adv = {};
-      if (caps.focusMode && caps.focusMode.includes('continuous')) adv.focusMode = 'continuous';
-      if (Object.keys(adv).length) await track.applyConstraints({advanced: [adv]});
+      if (caps.focusMode && caps.focusMode.includes('continuous')) await track.applyConstraints({advanced: [{focusMode: 'continuous'}]});
       $('#torch').hidden = !caps.torch;
     } catch(e) {}
   }
 
-  async function nativeSupported() {
-    if (!('BarcodeDetector' in window)) return false;
-    try { const f = await BarcodeDetector.getSupportedFormats(); return f.includes('ean_13'); } catch(e) { return false; }
-  }
-
-  async function startNative() {
-    const want = ['ean_13','ean_8','upc_a','upc_e','code_128','itf'];
-    const fmts = (await BarcodeDetector.getSupportedFormats()).filter(f => want.includes(f));
-    const det = new BarcodeDetector({formats: fmts});
-    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: facing}, ...HD}});
-    video = document.createElement('video');
-    video.setAttribute('playsinline', ''); video.muted = true; video.srcObject = stream;
-    $('#cam').innerHTML = ''; $('#cam').append(video);
-    const g = document.createElement('div'); g.id = 'camguide'; $('#cam').append(g);
-    await video.play();
-    await tuneTrack(stream.getVideoTracks()[0]);
-    let busy = false;
-    const tick = async () => {
-      if (!camOn) return;
-      if (!busy && video.readyState >= 2) {
-        busy = true;
-        try { const r = await det.detect(video); if (r.length) onCode(r[0].rawValue); } catch(e) {}
-        busy = false;
-      }
-      loopTimer = setTimeout(tick, 90);
-    };
-    camOn = true; tick();
-    camMsg('Camera on (built-in reader). Hold the barcode along the red line.');
-  }
-
-  async function startZxing() {
-    if (!window.Html5Qrcode) throw new Error('Camera scanner did not load. Check the internet connection.');
-    $('#cam').innerHTML = '<div id="camzx"></div>';
-    const F = Html5QrcodeSupportedFormats;
-    h5 = new Html5Qrcode('camzx', {formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.ITF], verbose: false});
-    await h5.start({facingMode: facing},
-      {fps: 10, disableFlip: true, videoConstraints: {facingMode: facing, width: {ideal: 1280}, height: {ideal: 720}},
-       qrbox: (w, h) => ({width: Math.floor(w * 0.9), height: Math.floor(Math.min(h * 0.45, w * 0.4))})},
-      onCode, () => {});
-    camOn = true;
-    try { const v = document.querySelector('#camzx video'); if (v && v.srcObject) await tuneTrack(v.srcObject.getVideoTracks()[0]); } catch(e) {}
-    camMsg('Camera on. Hold the barcode flat inside the box, 10–20 cm away.');
-  }
-
   async function startCam() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      say('This browser cannot use the camera here. Open https://do-landnl.github.io/Scanner/ in Chrome or Safari.', 'bad'); beep(false); return;
+      say('This browser cannot use the camera here. Open https://do-landnl.github.io/Scanner/ in Safari or Chrome.', 'bad'); beep(false); return;
     }
     $('#campanel').hidden = false;
     try {
-      if (await nativeSupported()) await startNative(); else await startZxing();
+      const det = await getDetector();
+      stream = await navigator.mediaDevices.getUserMedia({audio: false,
+        video: {facingMode: {ideal: facing}, width: {ideal: 1920}, height: {ideal: 1080}}});
+      video = document.createElement('video');
+      video.setAttribute('playsinline', ''); video.setAttribute('muted', ''); video.muted = true; video.autoplay = true;
+      video.srcObject = stream;
+      $('#cam').innerHTML = ''; $('#cam').append(video);
+      const g = document.createElement('div'); g.id = 'camguide'; $('#cam').append(g);
+      await video.play();
+      await tuneTrack(stream.getVideoTracks()[0]);
+      camOn = true;
       $('#camBtn').classList.add('on'); $('#camBtn').textContent = 'Stop camera';
+      camMsg('Camera on. Hold the barcode horizontal along the red line, 10–20 cm away.');
+      let busy = false;
+      const tick = async () => {
+        if (!camOn) return;
+        if (!busy && video.readyState >= 2 && video.videoWidth) {
+          busy = true;
+          try {
+            // read only the band around the red line (faster, fewer misreads), at most 1280 px wide
+            const vw = video.videoWidth, vh = video.videoHeight;
+            const sx = vw * 0.05, sw = vw * 0.9, sh = vh * 0.45, sy = (vh - sh) / 2;
+            const k = Math.min(1, 1280 / sw);
+            crop.width = Math.round(sw * k); crop.height = Math.round(sh * k);
+            crop.getContext('2d').drawImage(video, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
+            const r = await det.detect(crop);
+            if (r.length) onCode(r[0].rawValue);
+          } catch(e) {}
+          busy = false;
+        }
+        loopTimer = setTimeout(tick, 120);
+      };
+      tick();
       $('#campanel').scrollIntoView({block: 'nearest'});
     } catch (e) {
       await stopCam();
-      const m = String(e && (e.name || e.message || e));
+      const m = String(e && (e.message || e.name || e));
       say(/NotAllowed|Permission|denied|policy/i.test(m)
-        ? 'Camera blocked. Allow the camera for this site in the browser settings, then tap Camera again.'
+        ? 'Camera blocked. iPhone: Settings → Safari → Camera → Allow, then tap Camera again.'
         : 'Camera could not start: ' + m, 'bad');
       beep(false);
     }
   }
   async function stopCam() {
     camOn = false; clearTimeout(loopTimer);
-    try { if (h5) { await h5.stop(); h5.clear(); } } catch(e){}
-    h5 = null;
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; video = null; torchOn = false;
     $('#cam').innerHTML = ''; $('#campanel').hidden = true; $('#torch').hidden = true;
     $('#camBtn').classList.remove('on'); $('#camBtn').textContent = 'Camera';
   }
   $('#camBtn').onclick = () => camOn ? stopCam() : startCam();
-
-  // ---------- photo scanning: the phone's own camera app takes a sharp photo, we read the barcode from it ----------
-  async function decodeImage(file) {
-    if (await nativeSupported()) {
-      try {
-        const bmp = await createImageBitmap(file);
-        const r = await new BarcodeDetector({formats: ['ean_13','ean_8','upc_a','upc_e','code_128','itf']}).detect(bmp);
-        if (r.length) return r[0].rawValue;
-      } catch(e) {}
-    }
-    if (!window.Html5Qrcode) throw new Error('reader not loaded');
-    // shrink big phone photos (12+ MP) so the reader is fast and reliable
-    const img = await createImageBitmap(file);
-    const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
-    const cv = document.createElement('canvas');
-    cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
-    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-    const small = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.92));
-    let holder = document.getElementById('photozx');
-    if (!holder) { holder = document.createElement('div'); holder.id = 'photozx'; holder.hidden = true; document.body.append(holder); }
-    const F = Html5QrcodeSupportedFormats;
-    const reader = new Html5Qrcode('photozx', {formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.ITF], verbose: false});
-    try { return await reader.scanFile(new File([small], 'p.jpg', {type: 'image/jpeg'}), false); }
-    finally { try { reader.clear(); } catch(e){} }
-  }
-  $('#photo').addEventListener('change', async e => {
-    const f = e.target.files[0]; e.target.value = '';
-    if (!f) return;
-    $('#msg').textContent = 'Reading barcode from photo…'; $('#msg').className = 'part';
-    try { handle(await decodeImage(f)); }
-    catch(err) { say('No barcode found in the photo. Get closer (10–15 cm), barcode horizontal and sharp, then tap Photo again.', 'bad'); beep(false); }
-  });
   $('#flipcam').onclick = async () => { facing = facing === 'environment' ? 'user' : 'environment'; await stopCam(); startCam(); };
   $('#torch').onclick = async () => {
     try {
-      const v = video || document.querySelector('#camzx video');
-      const track = v && v.srcObject && v.srcObject.getVideoTracks()[0];
+      const track = stream && stream.getVideoTracks()[0];
       torchOn = !torchOn; await track.applyConstraints({advanced: [{torch: torchOn}]});
       $('#torch').classList.toggle('on', torchOn);
     } catch(e) { $('#torch').hidden = true; }
   };
-  // tapping the picture asks the camera to refocus
-  $('#cam').addEventListener('click', () => {
-    const v = video || document.querySelector('#camzx video');
-    if (v && v.srcObject) tuneTrack(v.srcObject.getVideoTracks()[0]);
+  $('#cam').addEventListener('click', () => { if (stream) tuneTrack(stream.getVideoTracks()[0]); });
+
+  // ---------- photo scanning: the phone's own camera app takes a sharp photo, we read the barcode from it ----------
+  function loadImage(file) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); res(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Could not open the photo')); };
+      img.src = url;
+    });
+  }
+  async function decodePhoto(file) {
+    const det = await getDetector();
+    const img = await loadImage(file);
+    const W = img.naturalWidth, H = img.naturalHeight;
+    // try the photo as-is, then turned 90° (barcode photographed upright)
+    for (const rot of [0, 90]) {
+      for (const max of [2000, 1200]) {
+        const k = Math.min(1, max / Math.max(W, H));
+        const w = Math.round(W * k), h = Math.round(H * k);
+        const cv = document.createElement('canvas');
+        cv.width = rot ? h : w; cv.height = rot ? w : h;
+        const x = cv.getContext('2d');
+        if (rot) { x.translate(h, 0); x.rotate(Math.PI / 2); }
+        x.drawImage(img, 0, 0, w, h);
+        const r = await det.detect(cv);
+        if (r.length) return r[0].rawValue;
+      }
+    }
+    return null;
+  }
+  $('#photoBtn').onclick = () => { picking = true; $('#photo').click(); };
+  window.addEventListener('focus', () => setTimeout(() => { picking = false; }, 1500));
+  $('#photo').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = ''; picking = false;
+    if (!f) return;
+    const m = $('#msg'); m.textContent = 'Reading barcode from photo…'; m.className = 'part';
+    try {
+      const code = await Promise.race([decodePhoto(f), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+      if (code) handle(code);
+      else { say('No barcode found in the photo. Get closer (10–15 cm), keep it sharp, then tap Photo again.', 'bad'); beep(false); }
+    } catch(err) { say('Photo could not be read: ' + (err.message || err), 'bad'); beep(false); }
   });
 
   // ---------- file loading ----------
