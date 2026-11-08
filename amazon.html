@@ -1464,7 +1464,7 @@
     const missing = rows.filter((r, i) => counts[i] < need(i)).length;
     const wb = XLSX.read(MANIFEST_B64, {type: 'base64'});
     const sheet = wb.SheetNames.find(n => /workflow.*template/i.test(n)), ws = wb.Sheets[sheet];
-    let lines = [], skus = new Set(), tooMany = [];
+    let lines = [], skus = new Set(), tooMany = [], mixedBoxes = [];
     if (AMZ) {
       // packed in boxes: one packing line per SKU per box (Orlando's rule):
       // Merchant SKU | Quantity = units in that box | Expiry | Lot code (empty) | Units per box | Number of boxes = 1 | L | W | H | kg
@@ -1472,16 +1472,23 @@
       XLSX.utils.sheet_add_aoa(ws, [[null, null, 'Optional', null, 'Optional: Use only for case-packed SKUs']], {origin: 'A7'});
       XLSX.utils.sheet_add_aoa(ws, [['Merchant SKU', 'Quantity', 'Expiration date (MM/DD/YYYY)', 'Manufacturing lot code ', 'Units per box ',
         'Number of boxes', 'Box length (cm)', 'Box width (cm)', 'Box height (cm)', 'Box weight (kg)']], {origin: 'A8'});
-      const perSku = {};
-      rows.forEach((r, i) => {
-        const sku = String(r[map.sku] || '').trim();
-        if (!sku) return;
-        Object.keys(boxes[i] || {}).map(Number).filter(b => !onlyBox || b === onlyBox).sort((a, b) => a - b).forEach(b => {
-          const n = boxes[i][b]; if (!n) return;
-          lines.push([sku, n, exp, null, n, 1, dims.l, dims.w, dims.h, dims.kg]);
-          skus.add(sku); perSku[sku] = (perSku[sku] || 0) + 1;
+      // Amazon reads "Units per box / Number of boxes" as a SINGLE-SKU box (case pack): every such line = its own box.
+      // So: a box with one SKU → case-pack line; a box with several SKUs (mixed) → its units go on the SKU's one
+      // "individual units" line with the box columns left empty, and the box is set up in Seller Central
+      // ("Everything will fit into one box" + 60×40×30 cm, 15 kg).
+      const perSku = {}, indiv = new Map(), skuOk = i => String(rows[i][map.sku] || '').trim();
+      const inScope = [...Array(nBoxes)].map((_, k) => k + 1).filter(b => (!onlyBox || b === onlyBox) && boxUnits(b));
+      inScope.forEach(b => {
+        const its = rows.map((r, i) => i).filter(i => (boxes[i] || {})[b] > 0 && skuOk(i));
+        const single = new Set(its.map(skuOk)).size === 1;
+        its.forEach(i => {
+          const sku = skuOk(i), n = boxes[i][b]; skus.add(sku);
+          if (single) { lines.push([sku, n, exp, null, n, 1, dims.l, dims.w, dims.h, dims.kg]); perSku[sku] = (perSku[sku] || 0) + 1; }
+          else indiv.set(sku, (indiv.get(sku) || 0) + n);
         });
+        if (!single && its.length) mixedBoxes.push(b);
       });
+      indiv.forEach((n, sku) => { lines.push([sku, n, exp]); perSku[sku] = (perSku[sku] || 0) + 1; });
       tooMany = Object.keys(perSku).filter(k => perSku[k] > 4);   // Amazon allows one SKU on max. 4 packing lines
     } else {
       // one line per SKU with the scanned quantity (same SKU on two lines is added together)
@@ -1504,7 +1511,11 @@
     say(`Amazon manifest${onlyBox ? ' Box ' + onlyBox : ''}: ${skus.size} SKUs, ${lines.length} packing line${lines.length === 1 ? '' : 's'}, ${units} units`
       + (!onlyBox && missing ? ` — ${missing} product(s) not fully packed, only packed units are in the file` : '')
       + (noSku.length ? ` — ⚠ left out, no SKU yet (paste their details): ${noSku.map(label).join(', ')}` : '')
-      + (tooMany.length ? ` — ⚠ in more than 4 boxes (Amazon max): ${tooMany.join(', ')}` : ''), (!onlyBox && missing) || tooMany.length || noSku.length ? 'part' : 'ok');
+      + (tooMany.length ? ` — ⚠ in more than 4 boxes (Amazon max): ${tooMany.join(', ')}` : '')
+      + (mixedBoxes.length ? (mixedBoxes.length === 1 && (onlyBox || nBoxes === 1)
+          ? `. Mixed box: in Seller Central choose "Everything will fit into one box" and enter ${dims.l}×${dims.w}×${dims.h} cm, ${dims.kg} kg.`
+          : `. Mixed box${mixedBoxes.length === 1 ? '' : 'es'} ${mixedBoxes.join(', ')}: in Seller Central choose "Multiple boxes will be needed" and enter what is in each box (use "Box contents" export).`) : ''),
+      (!onlyBox && missing) || tooMany.length || noSku.length ? 'part' : 'ok');
     lock();
   }
 
