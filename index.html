@@ -115,6 +115,10 @@
   .pbox.cur{background:var(--accent);color:var(--card)}
   .rowtools{margin-left:6px;opacity:.75}
   .dim{width:4.2em}
+  .catstate{font-weight:700;padding:2px 8px;border-radius:8px}
+  .catstate.ok{color:var(--ok-ink);background:var(--ok)}
+  .catstate.part{color:var(--part-ink);background:var(--part)}
+  .catstate.bad{color:var(--bad-ink);background:var(--bad)}
   table.amz td.code{font:500 13px var(--mono);white-space:nowrap}
   table.amz td.fn{font-weight:700;color:var(--accent)}
   table.amz td.brand{font-weight:600;white-space:nowrap}
@@ -227,6 +231,11 @@
       <button id="addbtn" class="primary">Add to shipment</button>
       <span class="note" id="addnote"></span>
     </div>
+    <div class="addrow note">
+      <span id="catcount"></span>
+      <label class="btn mini">Load product list<input id="catfile" type="file" accept=".xlsx,.xls,.csv" hidden></label>
+      <span>Then an FNSKU (X00…), SKU or EAN alone is enough to add a product.</span>
+    </div>
   </section>
   <div class="filters" id="filters" hidden>
     <button class="mini on" data-f="all">All</button>
@@ -274,7 +283,7 @@
   let expAll = EXP_DEFAULT;
   // Amazon page (title "FBA Pack Scanner"): shipments are built/saved in the tool and packed into boxes
   const AMZ = /^FBA/.test(document.title);
-  const AMZ_HEADERS = ['name', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes'];
+  const AMZ_HEADERS = ['name', 'Brand', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes', 'Other EANs'];
   let boxes = [], curBox = 1, nBoxes = 1;   // boxes[i] = {boxNumber: units}
   const DIM_DEFAULT = {l: 60, w: 40, h: 30, kg: 15};   // Orlando's standard carton
   let dims = {...DIM_DEFAULT};
@@ -594,10 +603,10 @@
       let qty = totalCol >= 0 ? toNum(r[totalCol]) : 0;
       if (!qty) qty = boxes.reduce((s, b) => s + b[1], 0);
       if (!qty) return;                                                               // product listed without a quantity: not in this shipment
-      out.push([title || f.SKU || f.FNSKU, f.EAN || f.UPC || '', f.FNSKU || '', f.SKU || '', f.ASIN || '', qty,
-                boxes.map(b => `${b[0]}: ${b[1]}`).join(' · ')]);
+      out.push([title || f.SKU || f.FNSKU, '', f.EAN || f.UPC || '', f.FNSKU || '', f.SKU || '', f.ASIN || '', qty,
+                boxes.map(b => `${b[0]}: ${b[1]}`).join(' · '), '']);
     });
-    return out.length ? [['name', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes'], ...out] : null;
+    return out.length ? [['name', 'Brand', 'EAN', 'FNSKU', 'SKU', 'ASIN', 'quantity', 'Boxes', 'Other EANs'], ...out] : null;
   }
 
   function setup(name, aoa) {
@@ -620,7 +629,7 @@
       say(rows.length + ' lines loaded — start scanning', 'ok');
     }
     lastIdx = -1;
-    if (AMZ) { store(); amzRefresh(); }
+    if (AMZ) { store(); catFromRows(); amzRefresh(); }
     $('#expAll').value = expAll;
     const val = orderValue();
     $('#fname').textContent = '· ' + name.replace(/\.(xlsx|xls|csv)$/i, '') + (val ? ' · ' + money(val) : '');
@@ -682,9 +691,20 @@
     if (!rows.length) { say('Open an order file first', 'bad'); beep(false); return; }
     // digits → compare as EAN/UPC (leading zeros ignored); anything else → FNSKU / SKU / ASIN exact match
     const digits = /^\d{6,14}$/.test(txt), code = digits ? normEan(txt) : txt;
+    const iOther = headers.findIndex(h => h.toUpperCase() === 'OTHER EANS');
     const hits = rows.map((r, i) =>
       (digits && map.ean >= 0 && normEan(r[map.ean]) === code) ||
+      (digits && iOther >= 0 && String(r[iOther] || '').split(/[;,\s]+/).some(e => e && normEan(e) === code)) ||
       (map.alt || []).some(c => String(r[c] ?? '').trim().toUpperCase() === txt) ? i : -1).filter(i => i >= 0);
+    if (!hits.length && AMZ) {
+      // not in this shipment: if the product memory knows it, get it ready to add
+      const p = catFind(txt);
+      if (p) {
+        $('#paste').value = p.fnsku || p.sku; $('#paste').dispatchEvent(new Event('input'));
+        say(`Not in this shipment: ${(p.title || p.sku).slice(0, 70)} — type the quantity and press Enter to add it`, 'part'); beep(false);
+        $('#addqty').focus(); $('#addqty').select(); return;
+      }
+    }
     if (!hits.length) {
       unknown[code] = (unknown[code] || 0) + 1; store();
       say('✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
@@ -820,7 +840,9 @@
       if (filter === 'todo' && st !== 'todo') return;
       if (filter === 'part' && st !== 'part') return;
       if (filter === 'done' && st !== 'done' && st !== 'over') return;
-      const brand = brandOf(val(r, cName));
+      const cBr = headers.findIndex(h => h.toUpperCase() === 'BRAND');
+      const bare = val(r, cName) === val(r, cFn);   // added by FNSKU only, details not known yet
+      const brand = (cBr >= 0 && val(r, cBr).trim()) || (bare ? '' : brandOf(val(r, cName)));
       if (q && !(r.map(showEan).join(' ') + ' ' + brand).toLowerCase().includes(q)) return;
       // phones: brand · EAN · FNSKU under the name (the separate columns are hidden there)
       const phone = `<span class="eansub">${esc([brand, showEan(val(r, cEan)), val(r, cFn)].filter(Boolean).join(' · '))}</span>`;
@@ -942,6 +964,58 @@
   window.addEventListener('hashchange', openFromLink);
   openFromLink();
 
+  // ---------- Amazon product memory (this browser only) ----------
+  // Every product pasted, loaded from an FBA sheet or from the product list (scripts/export_fba_product_list.py)
+  // is remembered, so later an FNSKU, SKU, ASIN or EAN alone is enough to add it to a shipment.
+  const CAT_KEY = 'qps-catalog';
+  let catalog = [];
+  try { catalog = JSON.parse(localStorage.getItem(CAT_KEY) || '[]'); } catch(e) { catalog = []; }
+  const catSave = () => { try { localStorage.setItem(CAT_KEY, JSON.stringify(catalog)); } catch(e) {} };
+  const broken = s => /�/.test(s || '');
+  function catRemember(p) {
+    if (!p || !(p.sku || p.fnsku)) return;
+    const k = catalog.findIndex(c => (p.sku && c.sku === p.sku) || (p.fnsku && c.fnsku === p.fnsku));
+    if (k < 0) { catalog.push({sku: '', fnsku: '', asin: '', ean: '', title: '', brand: '', eans: [], ...p, eans: [...(p.eans || [])]}); return; }
+    const c = catalog[k];
+    ['sku', 'fnsku', 'asin', 'brand'].forEach(f => { if (p[f] && !c[f]) c[f] = p[f]; });
+    if (p.title && (!c.title || broken(c.title))) c.title = p.title;      // a clean pasted title replaces a broken one
+    c.eans = c.eans || [];
+    [p.ean, ...(p.eans || [])].filter(Boolean).forEach(e => {
+      if (!c.ean) c.ean = e; else if (normEan(e) !== normEan(c.ean) && !c.eans.some(x => normEan(x) === normEan(e))) c.eans.push(e);
+    });
+  }
+  function catFind(code) {
+    const t = String(code).trim().toUpperCase(); if (!t) return null;
+    const d = /^\d{6,14}$/.test(t) ? normEan(t) : null;
+    return catalog.find(p => [p.fnsku, p.sku, p.asin].some(v => v && v.toUpperCase() === t)
+      || (d && [p.ean, ...(p.eans || [])].some(e => e && normEan(e) === d))) || null;
+  }
+  // when the loaded product list was made (Info sheet "Generated", else the file date) → shown with a colour
+  const META_KEY = 'qps-catalog-meta';
+  let catMeta = {};
+  try { catMeta = JSON.parse(localStorage.getItem(META_KEY) || '{}'); } catch(e) { catMeta = {}; }
+  const fmtDate = d => d.toLocaleString('en-GB', {weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'});
+  const catCount = () => {
+    const el = document.getElementById('catcount'); if (!el) return;
+    let age = '', cls = 'bad';
+    if (catMeta.generated) {
+      const g = new Date(catMeta.generated.replace(' ', 'T'));
+      const days = Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(g).setHours(0, 0, 0, 0)) / 864e5);
+      cls = days <= 0 ? 'ok' : days <= 2 ? 'part' : 'bad';
+      age = ` · product list of ${fmtDate(g)} (${days <= 0 ? 'today ✓' : days === 1 ? 'yesterday' : days + ' days old'}${days > 0 ? ' — load the newest list' : ''})`;
+    } else age = catalog.length ? ' · no product list loaded yet (only pasted products)' : ' · load the product list';
+    el.innerHTML = `<span class="catstate ${cls}">Product memory: ${catalog.length} products${esc(age)}</span>`;
+  };
+  // remember the products of the shipment that is open now
+  function catFromRows() {
+    const c = k => headers.findIndex(h => h.toUpperCase() === k);
+    const cB = c('BRAND'), cO = c('OTHER EANS'), cA = c('ASIN'), cS = c('SKU');
+    rows.forEach(r => catRemember({sku: cS >= 0 ? String(r[cS] || '') : '', fnsku: map.fnsku >= 0 ? String(r[map.fnsku] || '') : '',
+      asin: cA >= 0 ? String(r[cA] || '') : '', ean: map.ean >= 0 ? showEan(r[map.ean]) : '', title: map.name >= 0 ? String(r[map.name] || '') : '',
+      brand: cB >= 0 ? String(r[cB] || '') : '', eans: cO >= 0 ? String(r[cO] || '').split(/[;,\s]+/).filter(Boolean) : []}));
+    catSave(); catCount();
+  }
+
   // ---------- Amazon FBA: build shipment, pack boxes ----------
   const sumBox = i => Object.values(boxes[i] || {}).reduce((s, n) => s + n, 0);
   const boxUnits = b => boxes.reduce((s, bx) => s + (bx[b] || 0), 0);
@@ -1039,6 +1113,7 @@
   function amzRefresh() {
     if (!AMZ) return;
     $('#addbox').hidden = false;
+    catCount();
     $('#dimBox').hidden = !rows.length;
     $('#dimL').value = dims.l; $('#dimW').value = dims.w; $('#dimH').value = dims.h; $('#dimKg').value = dims.kg;
     $('#shipname').value = fileName.replace(/\.(xlsx|xls|csv)$/i, '');
@@ -1055,32 +1130,69 @@
     drop.hidden = true; $('#filters').hidden = true; $('#mapbox').hidden = true;
     amzRefresh(); render();
   }
+  // what was pasted/typed → products. Full Seller Central text, or just codes (FNSKU / SKU / ASIN / EAN, one or more)
+  function readPasteBox(text) {
+    const prods = splitPasted(text).map(p => ({...p, brand: brandOf(p.title)}));
+    prods.forEach(p => catRemember({sku: p.f.SKU, fnsku: p.f.FNSKU, asin: p.f.ASIN, ean: p.f.EAN || p.f.UPC, title: p.title, brand: p.brand}));
+    if (prods.length) return {prods, notFound: [], placeholders: 0};
+    const out = [], notFound = []; let placeholders = 0;
+    String(text).split(/[\s,;]+/).map(s => s.trim()).filter(Boolean).forEach(code => {
+      const c = catFind(code);
+      if (c) out.push({title: c.title, brand: c.brand || brandOf(c.title), eans: c.eans || [],
+                       f: {SKU: c.sku, FNSKU: c.fnsku, ASIN: c.asin, EAN: c.ean}});
+      else if (/^X00[0-9A-Z]{7}$/i.test(code)) { out.push({title: '', brand: '', eans: [], f: {FNSKU: code.toUpperCase()}}); placeholders++; }
+      else notFound.push(code);
+    });
+    return {prods: out, notFound, placeholders};
+  }
   function amzAdd() {
-    const prods = splitPasted($('#paste').value);
-    if (!prods.length) { say('No product found in the pasted text — it needs at least a SKU or FNSKU line.', 'bad'); beep(false); return; }
+    const {prods, notFound, placeholders} = readPasteBox($('#paste').value);
+    if (!prods.length) {
+      say(notFound.length ? `Not in the product memory: ${notFound.join(', ')} — paste the full details from Seller Central once.`
+        : 'Nothing found — paste the product details from Seller Central, or an FNSKU (X00…), SKU or EAN.', 'bad');
+      beep(false); return;
+    }
     const qty = Math.max(1, Math.round(toNum($('#addqty').value)) || 1);
     if (!fileName || headers.join() !== AMZ_HEADERS.join() && !rows.length) amzStartEmpty($('#shipname').value.trim() || 'FBA ' + today());
-    const iName = headers.indexOf('name'), iEan = map.ean, iF = map.fnsku, iSku = headers.findIndex(h => h.toUpperCase() === 'SKU');
-    const iAsin = headers.findIndex(h => h.toUpperCase() === 'ASIN'), iQty = map.qty;
-    let added = 0, more = 0;
-    prods.forEach(({title, f}) => {
+    const H = k => headers.findIndex(h => h.toUpperCase() === k);
+    const iName = headers.indexOf('name'), iEan = map.ean, iF = map.fnsku, iSku = H('SKU'), iAsin = H('ASIN'), iQty = map.qty;
+    const iBrand = H('BRAND'), iOther = H('OTHER EANS');
+    let added = 0, more = 0, filled = 0;
+    prods.forEach(({title, f, brand, eans}) => {
       const same = rows.findIndex(r => (f.SKU && iSku >= 0 && r[iSku] === f.SKU) || (f.FNSKU && iF >= 0 && r[iF] === f.FNSKU));
-      if (same >= 0) { rows[same][iQty] = toNum(rows[same][iQty]) + qty; more++; return; }
+      if (same >= 0) {
+        const r = rows[same];   // also fill details that were missing (product first added by FNSKU only)
+        const wasBare = iSku >= 0 && !r[iSku] && !!f.SKU;   // pasting details for an FNSKU-only line only fills it in
+        if (iOther >= 0 && eans && eans.length && !r[iOther]) r[iOther] = eans.join('; ');
+        if (iName >= 0 && title && (!r[iName] || r[iName] === r[iF] || broken(r[iName]))) r[iName] = title;
+        if (iSku >= 0 && f.SKU && !r[iSku]) r[iSku] = f.SKU;
+        if (iAsin >= 0 && f.ASIN && !r[iAsin]) r[iAsin] = f.ASIN;
+        if (iEan >= 0 && (f.EAN || f.UPC) && !r[iEan]) r[iEan] = f.EAN || f.UPC;
+        if (iBrand >= 0 && brand && !r[iBrand]) r[iBrand] = brand;
+        if (wasBare) { filled++; return; }
+        r[iQty] = toNum(r[iQty]) + qty; more++; return;
+      }
       const r = headers.map(() => '');
       if (iName >= 0) r[iName] = title || f.SKU || f.FNSKU;
+      if (iBrand >= 0) r[iBrand] = brand || '';
       if (iEan >= 0) r[iEan] = f.EAN || f.UPC || '';
       if (iF >= 0) r[iF] = f.FNSKU || '';
       if (iSku >= 0) r[iSku] = f.SKU || '';
       if (iAsin >= 0) r[iAsin] = f.ASIN || '';
+      if (iOther >= 0) r[iOther] = (eans || []).join('; ');
       r[iQty] = qty;
       rows.push(r); counts.push(0); boxes.push({}); added++;
     });
+    catSave(); catCount();
     autoMap(); store();
     drop.hidden = true; $('#filters').hidden = false;
     $('#paste').value = ''; $('#addqty').value = 1;
     $('#addnote').textContent = '';
     amzRefresh(); render();
-    say(`Added ${added} product${added === 1 ? '' : 's'}${more ? `, ${more} already in the shipment got +${qty}` : ''} (${qty} each)`, 'ok'); beep(true);
+    say((added || more ? `Added ${added} product${added === 1 ? '' : 's'}${more ? `, ${more} already in the shipment got +${qty}` : ''} (${qty} each)` : '')
+      + (filled ? `${added || more ? ' — ' : '✓ '}details filled in for ${filled} product${filled === 1 ? '' : 's'} (quantity unchanged)` : '')
+      + (placeholders ? ` — ${placeholders} FNSKU not in the product memory yet: paste its details later to fill name/SKU (needed for the manifest)` : '')
+      + (notFound.length ? ` — not found: ${notFound.join(', ')}` : ''), placeholders || notFound.length ? 'part' : 'ok'); beep(true);
     $('#paste').blur(); lock();
   }
   if (AMZ) {
@@ -1090,8 +1202,41 @@
     });
     $('#addqty').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); amzAdd(); } });
     $('#paste').addEventListener('input', () => {
-      const n = splitPasted($('#paste').value).length;
-      $('#addnote').textContent = n ? `${n} product${n === 1 ? '' : 's'} found — set the quantity and click Add` : '';
+      const t = $('#paste').value, n = splitPasted(t).length;
+      if (n) { $('#addnote').textContent = `${n} product${n === 1 ? '' : 's'} found — set the quantity and click Add`; return; }
+      // codes only: show what the memory knows
+      const codes = t.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+      const names = codes.map(c => { const p = catFind(c); return p ? (p.title || p.sku).slice(0, 50) : (/^X00/i.test(c) ? c + ' (new FNSKU)' : c + ' (unknown)'); });
+      $('#addnote').textContent = codes.length ? names.join(' · ') + ' — set the quantity and click Add' : '';
+    });
+    $('#catfile').addEventListener('change', e => {
+      const file = e.target.files[0]; e.target.value = '';
+      if (!file) return;
+      const rd = new FileReader();
+      rd.onload = ev => {
+        try {
+          const wb = XLSX.read(new Uint8Array(ev.target.result), {type: 'array'});
+          const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header: 1, raw: false, defval: ''});
+          const head = (aoa[0] || []).map(h => String(h).trim().toUpperCase());
+          const ix = k => head.indexOf(k);
+          if (ix('FNSKU') < 0 && ix('SKU') < 0) { say('This is not a product list (needs SKU / FNSKU columns).', 'bad'); return; }
+          const before = catalog.length;
+          aoa.slice(1).forEach(r => catRemember({sku: String(r[ix('SKU')] || '').trim(), fnsku: String(r[ix('FNSKU')] || '').trim(),
+            asin: String(r[ix('ASIN')] || '').trim(), ean: String(r[ix('EAN')] || '').trim(), title: String(r[ix('TITLE')] || '').trim(),
+            brand: String(r[ix('BRAND')] || '').trim(), eans: String(r[ix('OTHER EANS')] || '').split(/[;,\s]+/).filter(Boolean)}));
+          // list date: Info sheet "Generated" (written by export_fba_product_list.py), else the file's own date
+          let gen = '';
+          const info = wb.Sheets['Info'];
+          if (info) XLSX.utils.sheet_to_json(info, {header: 1, raw: false}).forEach(r => { if (/generated/i.test(r[0])) gen = String(r[1] || ''); });
+          if (!/^\d{4}-\d{2}-\d{2}/.test(gen)) { const d = new Date(file.lastModified); gen = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+          catMeta = {generated: gen, file: file.name, loadedAt: new Date().toISOString()};
+          try { localStorage.setItem(META_KEY, JSON.stringify(catMeta)); } catch(e2) {}
+          catSave(); catCount();
+          say(`Product list of ${gen} loaded: ${catalog.length} products in memory (${catalog.length - before} new)`, 'ok'); beep(true);
+        } catch(err) { say('Could not read the product list file.', 'bad'); }
+        lock();
+      };
+      rd.readAsArrayBuffer(file);
     });
     // copy from Seller Central, Ctrl+V anywhere: the details land in the paste box instead of the scan box
     scan.addEventListener('paste', e => {
