@@ -746,6 +746,11 @@
         $('#addqty').focus(); $('#addqty').select(); return;
       }
     }
+    if (!hits.length && !/\d/.test(txt) && $('#search')) {
+      // a typed word (no digits) is not a barcode: search the list with it instead of counting it as a wrong scan
+      $('#search').value = raw.trim(); $('#search').dispatchEvent(new Event('input', {bubbles: true}));
+      say(`"${raw.trim()}" is not a barcode — showing products that match it`, 'part'); return;
+    }
     if (!hits.length) {
       unknown[code] = (unknown[code] || 0) + 1; store();
       say('✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
@@ -928,7 +933,9 @@
     if (AMZ) renderBoxBar();
 
     const u = Object.entries(unknown);
-    $('#unknown').innerHTML = u.length ? 'Scanned but not in this order: ' + u.map(([k,v]) => `<span style="font-family:var(--mono)">${esc(k)}</span> ×${v}`).join(', ') : '';
+    $('#unknown').innerHTML = u.length ? 'Scanned but not in this order: ' + u.map(([k,v]) => `<span style="font-family:var(--mono)">${esc(k)}</span> ×${v}`).join(', ')
+      + ' <button class="mini" id="clearunknown" title="Clear this list">✕ Clear</button>' : '';
+    if ($('#clearunknown')) $('#clearunknown').onclick = () => { unknown = {}; store(); render(); say('List of wrong scans cleared', 'ok'); lock(); };
     if (scrollToLast && lastIdx >= 0) {
       const el = document.getElementById('r' + lastIdx);
       // only scroll when the row is hidden under the header or below the screen
