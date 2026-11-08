@@ -1219,24 +1219,7 @@
       `<tr${i === lastIdx ? ' class="last"' : ''}><td class="cnt">${locked ? `<b>${n}</b>` : `<button class="mini" data-bm="${i}" aria-label="one less in this box">−</button><input class="bvqty" id="bvq${i}" type="text" inputmode="numeric" value="${n}" data-bq="${i}" aria-label="units of this product in Box ${curBox}"><button class="mini" data-bp="${i}" aria-label="one more in this box">+</button>`}</td>
        <td>${esc(label(i))}<span class="subinfo">${esc(map.fnsku >= 0 ? rows[i][map.fnsku] || '' : '')}</span></td>
        <td>${locked ? '' : `<button class="mini" data-bx="${i}" title="Take this product out of Box ${curBox}">✕</button>`}</td></tr>`).join('') + '</tbody></table>';
-    // Seller Central asks this for every box ("Packing information for 1 box"); Amazon's manifest file has no place for it
-    // when a box holds several products, so it is kept here per box — weigh the box and type the real values
-    if (items.length) {
-      const d = bd(curBox), f = (k, w) => `<input class="bvdim" data-k="${k}" type="text" inputmode="decimal" value="${d[k]}" style="width:${w}em;text-align:center" aria-label="${k}">`;
-      h += `<div class="packinfo"><b>Packing information for Seller Central</b>
-        <span>Box dimensions (cm): ${f('l', 3.2)} × ${f('w', 3.2)} × ${f('h', 3.2)}</span>
-        <span>Box weight (kg): ${f('kg', 3.6)}</span>
-        <button id="copypack" class="mini" title="Copy size and weight">Copy</button></div>`;
-    }
     v.innerHTML = h; v.hidden = false;
-    v.querySelectorAll('.bvdim').forEach(inp => {
-      const save = () => { const x = toNum(inp.value), k = inp.dataset.k;
-        if (x > 0) { boxDims[curBox] = {...bd(curBox), [k]: x}; store(); } else inp.value = bd(curBox)[k]; };
-      inp.onchange = save;
-      inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); save(); inp.blur(); scan.focus(); } };
-    });
-    if ($('#copypack')) $('#copypack').onclick = () => { const d = bd(curBox), t = `${d.l} x ${d.w} x ${d.h} cm, ${d.kg} kg`;
-      (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => say('Copied: ' + t, 'ok'), () => say(t, 'ok')); lock(); };
     v.classList.toggle('locked', locked);
     if ($('#completebox')) $('#completebox').onclick = completeBox;
     if ($('#reopenbox')) $('#reopenbox').onclick = reopenBox;
@@ -1541,7 +1524,7 @@
       + (noSku.length ? ` — ⚠ left out, no SKU yet (paste their details): ${noSku.map(label).join(', ')}` : '')
       + (tooMany.length ? ` — ⚠ in more than 4 boxes (Amazon max): ${tooMany.join(', ')}` : '')
       + (mixedBoxes.length ? (mixedBoxes.length === 1 && (onlyBox || nBoxes === 1)
-          ? `. Mixed box: in Seller Central choose "Everything will fit into one box" and enter ${bd(mixedBoxes[0]).l} × ${bd(mixedBoxes[0]).w} × ${bd(mixedBoxes[0]).h} cm, ${bd(mixedBoxes[0]).kg} kg (shown under the box).`
+          ? `. Mixed box: in Seller Central choose "Everything will fit into one box" and enter ${bd(mixedBoxes[0]).l} × ${bd(mixedBoxes[0]).w} × ${bd(mixedBoxes[0]).h} cm, ${bd(mixedBoxes[0]).kg} kg.`
           : `. Mixed box${mixedBoxes.length === 1 ? '' : 'es'} ${mixedBoxes.join(', ')}: in Seller Central choose "Multiple boxes will be needed" and enter what is in each box (use "Box contents" export).`) : ''),
       (!onlyBox && missing) || tooMany.length || noSku.length ? 'part' : 'ok');
     lock();
