@@ -103,8 +103,8 @@
     .extra{display:none}
     header{gap:5px;padding-block:6px}
     .top{gap:6px}
-    h1{font-size:14px;white-space:nowrap}
-    h1 small{display:none}
+    h1{font-size:14px}
+    h1 small{font-size:13px;font-weight:700;color:var(--accent);margin-left:2px}
     /* all buttons visible in a fixed 3-column grid under the title */
     .tools{margin-left:0;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
     .tools button,.tools label.btn{padding:7px 4px;font-size:13px;white-space:nowrap;text-align:center;overflow:hidden;text-overflow:ellipsis}
@@ -197,7 +197,14 @@
 (() => {
   const $ = s => document.querySelector(s);
   const scan = $('#scan');
-  let fileName = '', headers = [], rows = [], map = {ean:-1, qty:-1, name:-1, order:-1};
+  let fileName = '', headers = [], rows = [], map = {ean:-1, qty:-1, name:-1, order:-1, price:-1};
+  let linkValue = null;   // order value carried in a share link (the phone has no price column)
+  const money = v => '€' + v.toLocaleString('nl-NL', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  // order value = Σ quantity × unit price (Qogita "€-price" column, excl. VAT)
+  const orderValue = () => {
+    if (map.price < 0) return linkValue;
+    return rows.reduce((s, r, i) => s + need(i) * toNum(r[map.price]), 0);
+  };
   let counts = [], history = [], unknown = {}, lastIdx = -1, filter = 'all', keyboard = false;
 
   // ---------- helpers ----------
@@ -451,6 +458,7 @@
           const aoa = XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:true, defval:''});
           if (!best || aoa.length > best.length) best = aoa;
         });
+        linkValue = null;
         setup(f.name, best);
       } catch(err) { say('Could not read this file. Open the .xlsx you downloaded from the Qogita order page.', 'bad'); beep(false); }
       lock();
@@ -475,7 +483,8 @@
       say(rows.length + ' lines loaded — start scanning', 'ok');
     }
     lastIdx = -1;
-    $('#fname').textContent = '· ' + name.replace(/\.(xlsx|xls|csv)$/i, '');
+    const val = orderValue();
+    $('#fname').textContent = '· ' + name.replace(/\.(xlsx|xls|csv)$/i, '') + (val ? ' · ' + money(val) : '');
     drop.hidden = true; $('#filters').hidden = false;
     renderMap(); render();
   }
@@ -489,6 +498,7 @@
     map.name  = find(/^(name|product|title|description)/i);
     if (map.name < 0) map.name = find(/name|title|product|description/i);
     map.order = find(/^order/i);
+    map.price = find(/price/i);
     if (map.ean < 0) {
       let bestScore = 0;
       headers.forEach((_, c) => {
@@ -624,13 +634,20 @@
   }
   const orderId = () => fileName.replace(/\.(xlsx|xls|csv)$/i, '') || 'order';
 
+  // keep links short: first 3 words of the product name, max 26 characters (brand + product is enough to find it)
+  const shortName = n => {
+    const w = String(n ?? '').replace(/[\t\n]/g, ' ').replace(/\s+/g, ' ').trim().split(' ');
+    const words = w.filter((x, i) => i === 0 || x.toLowerCase() !== w[i - 1].toLowerCase());  // "Medicube Medicube" → "Medicube"
+    return words.slice(0, 3).join(' ').slice(0, 26);
+  };
   async function makeLink() {
     const lines = rows.map(r => [normEan(r[map.ean]) ? showEan(r[map.ean]) : '', need(rows.indexOf(r)),
-      map.name >= 0 ? String(r[map.name] ?? '').replace(/[\t\n]/g, ' ') : ''].join('\t')).join('\n');
+      map.name >= 0 ? shortName(r[map.name]) : ''].join('\t')).join('\n');
     const base = location.href.split('#')[0].split('?')[0];
     const id = encodeURIComponent(orderId());
-    try { return `${base}#o=${id}&z=${await squeeze(lines)}`; }
-    catch(e) { return `${base}#o=${id}&t=${encodeURIComponent(lines)}`; }
+    const val = orderValue(), v = val ? `&v=${val.toFixed(2)}` : '';
+    try { return `${base}#o=${id}${v}&z=${await squeeze(lines)}`; }
+    catch(e) { return `${base}#o=${id}${v}&t=${encodeURIComponent(lines)}`; }
   }
 
   $('#share').onclick = async () => {
@@ -638,7 +655,10 @@
     const link = await makeLink();
     $('#sharetitle').textContent = 'Open order ' + orderId() + ' on a phone';
     $('#sharelink').value = link;
-    $('#sharewa').href = 'https://wa.me/?text=' + encodeURIComponent('Qogita order ' + orderId() + ' to pack: ' + link);
+    const val = orderValue(), units = rows.reduce((s, _, i) => s + need(i), 0);
+    const summary = `Qogita order ${orderId()}` + (val ? ` · ${money(val)}` : '') + ` · ${rows.length} lines · ${units} units`;
+    $('#sharetitle').textContent = summary;
+    $('#sharewa').href = 'https://wa.me/?text=' + encodeURIComponent(summary + '\nScan: ' + link);
     const q = $('#shareqr'); q.innerHTML = '';
     try {
       const qr = qrcode(0, 'L'); qr.addData(link); qr.make();
@@ -663,6 +683,7 @@
       const aoa = [['gtin', 'quantity', 'name']].concat(text.split('\n').filter(Boolean).map(l => {
         const [ean, qty, name] = l.split('\t'); return [ean, Number(qty) || 1, name || ''];
       }));
+      linkValue = h.get('v') ? Number(h.get('v')) : null;
       setup(h.get('o') + '.xlsx', aoa);
     } catch(e) { say('This order link is damaged. Ask for a new link or open the order file.', 'bad'); }
   }
