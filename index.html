@@ -1393,7 +1393,12 @@
           const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header: 1, raw: false, defval: ''});
           const head = (aoa[0] || []).map(h => String(h).trim().toUpperCase());
           const ix = k => head.indexOf(k);
-          if (ix('FNSKU') < 0 && ix('SKU') < 0) { say('This is not a product list (needs SKU / FNSKU columns).', 'bad'); return; }
+          if (ix('FNSKU') < 0 && ix('SKU') < 0) {
+            // a shipment sheet (pasted products + "total labeled") loaded with the wrong button: open it as the shipment
+            const isShip = wb.SheetNames.some(n => amazonParse(XLSX.utils.sheet_to_json(wb.Sheets[n], {header: 1, raw: true, defval: ''})));
+            if (isShip) { readFile(file); return; }
+            say('This is not a product list (needs SKU / FNSKU columns). To pack a shipment sheet use "Open order file".', 'bad'); return;
+          }
           const before = catalog.length;
           aoa.slice(1).forEach(r => catRemember({sku: String(r[ix('SKU')] || '').trim(), fnsku: String(r[ix('FNSKU')] || '').trim(),
             asin: String(r[ix('ASIN')] || '').trim(), ean: String(r[ix('EAN')] || '').trim(), title: String(r[ix('TITLE')] || '').trim(),
