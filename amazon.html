@@ -725,7 +725,7 @@
             if (e && (!bestE || e.rows.length > bestE.rows.length)) bestE = e; });
           if (bestE) {
             linkValue = null; setup(f.name, [AMZ_HEADERS, ...bestE.rows]);
-            if (bestE.missing.length) say(`${bestE.rows.length} products loaded from EAN codes — ⚠ ${bestE.missing.length} EAN(s) not in the product memory (no SKU, left out of the manifest): ${bestE.missing.slice(0, 8).join(', ')}${bestE.missing.length > 8 ? '…' : ''}. Paste their details from Seller Central to complete them.`, 'part');
+            if (bestE.missing.length) { say(`${bestE.rows.length} products loaded from EAN codes — ⚠ NOT ON AMAZON: ${bestE.missing.length} EAN(s) are not in your Amazon product list (no SKU, left out of the manifest): ${bestE.missing.slice(0, 8).join(', ')}${bestE.missing.length > 8 ? '…' : ''}. Check them, or paste their details from Seller Central if they are new listings.`, 'bad'); beep(false); }
             lock(); return;
           }
         }
@@ -989,7 +989,7 @@
         renderOrderBar(other); return;
       }
       unknown[code] = (unknown[code] || 0) + 1; store();
-      say('✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
+      say(AMZ ? notOnAmazonAlert([raw.trim()], []) : '✗ NOT IN THIS ORDER: ' + raw.trim(), 'bad'); beep(false); render(); return;
     }
     if (AMZ) { amzScan(hits); return; }
     // a scan fills the line with the full ordered quantity; adjust with − / + if fewer are packed
@@ -1217,8 +1217,50 @@
     catch(e) { return `${base}#o=${id}${v}&t=${encodeURIComponent(lines)}`; }
   }
 
+  // Qogita with several order tabs open: one link carries ALL open orders (#m=…), the phone opens them as tabs.
+  // Text = one block per order, blocks split by \x1e; block line 1 = "id \t value", then EAN \t qty \t short name per line.
+  function orderBlock(n, hd, rw, mp, val) {
+    const q = i => mp.qty >= 0 ? toNum(rw[i][mp.qty]) : 1;
+    return [orderLabel(n) + '\t' + (val ? val.toFixed(2) : '')].concat(rw.map((r, i) =>
+      [mp.ean >= 0 && normEan(r[mp.ean]) ? showEan(r[mp.ean]) : '', q(i), mp.name >= 0 ? shortName(r[mp.name]) : ''].join('\t'))).join('\n');
+  }
+  async function makeMultiLink() {
+    store();
+    const parts = [], info = [];
+    for (const n of openOrders()) {
+      const s = n === fileName ? {headers, rows, map, linkValue} : savedOf(n);
+      if (!s || !s.rows || !s.rows.length) continue;
+      const mp = s.map || {}, q = i => mp.qty >= 0 ? toNum(s.rows[i][mp.qty]) : 1;
+      const val = mp.price >= 0 ? s.rows.reduce((t, r, i) => t + q(i) * toNum(r[mp.price]), 0) : (s.linkValue || 0);
+      parts.push(orderBlock(n, s.headers, s.rows, mp, val));
+      info.push({id: orderLabel(n), val, lines: s.rows.length, units: s.rows.reduce((t, _, i) => t + q(i), 0)});
+    }
+    const pl = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+    info.forEach(o => { o.txt = `${pl(o.lines, 'line')}, ${pl(o.units, 'unit')}`; });
+    const text = parts.join('\x1e'), base = location.href.split('#')[0].split('?')[0];
+    let link; try { link = `${base}#m=${info.length}&z=${await squeeze(text)}`; } catch(e) { link = `${base}#m=${info.length}&t=${encodeURIComponent(text)}`; }
+    return {link, info};
+  }
+
   $('#share').onclick = async () => {
     if (!rows.length) { say('Open an order file first, then tap Share link.', 'bad'); return; }
+    if (!AMZ && openOrders().length > 1) {
+      const {link, info} = await makeMultiLink();
+      const tot = info.reduce((t, o) => t + o.val, 0);
+      const summary = `${info.length} Qogita orders: ${info.map(o => o.id).join(', ')}` + (tot ? ` · ${money(tot)}` : '')
+        + ` · ${info.reduce((t, o) => t + o.lines, 0)} lines · ${info.reduce((t, o) => t + o.units, 0)} units`;
+      $('#sharelink').value = link;
+      $('#sharetitle').textContent = summary;
+      $('#sharewa').href = 'https://wa.me/?text=' + encodeURIComponent(summary + '\n'
+        + info.map(o => `- ${o.id}: ${o.txt}${o.val ? ', ' + money(o.val) : ''}`).join('\n') + '\nScan: ' + link);
+      const q = $('#shareqr'); q.innerHTML = '';
+      try {
+        const qr = qrcode(0, 'L'); qr.addData(link); qr.make();
+        const img = new Image(); img.alt = 'QR code for these orders'; img.src = qr.createDataURL(4, 2); q.append(img);
+      } catch(e) { q.innerHTML = '<p class="note">These orders are too big for one QR code. Use Copy link or WhatsApp.</p>'; }
+      $('#sharebox').hidden = false;
+      return;
+    }
     const link = await makeLink();
     $('#sharetitle').textContent = 'Open order ' + orderId() + ' on a phone';
     $('#sharelink').value = link;
@@ -1244,6 +1286,25 @@
 
   async function openFromLink() {
     const h = new URLSearchParams(location.hash.slice(1));
+    if (h.get('m') && (h.get('z') || h.get('t'))) {   // several Qogita orders in one link → one tab each
+      try {
+        const text = h.get('z') ? await unsqueeze(h.get('z')) : h.get('t');
+        const names = [];
+        if (fileName) store();
+        text.split('\x1e').filter(Boolean).forEach(block => {
+          const [head, ...ls] = block.split('\n');
+          const [id, v] = head.split('\t');
+          linkValue = v ? Number(v) : null;
+          setup(id + '.xlsx', [['gtin', 'quantity', 'name']].concat(ls.filter(Boolean).map(l => {
+            const [ean, qty, name] = l.split('\t'); return [ean, Number(qty) || 1, name || ''];
+          })));
+          names.push(fileName);
+        });
+        if (names.length > 1) { const first = names[0]; switchOrder(first); }
+        say(`${names.length} orders opened: ${names.map(orderLabel).join(', ')} — tap a tab to switch`, 'ok');
+      } catch(e) { say('This orders link is damaged. Ask for a new link or open the order files.', 'bad'); }
+      return;
+    }
     if (!h.get('o') || !(h.get('z') || h.get('t'))) return;
     try {
       const text = h.get('z') ? await unsqueeze(h.get('z')) : h.get('t');
@@ -1259,7 +1320,7 @@
   window.addEventListener('hashchange', openFromLink);
   openFromLink();
   // Qogita: opening the page brings back the open order tabs and the order you were on
-  if (!AMZ && !/[#&]o=/.test(location.hash)) {
+  if (!AMZ && !/[#&][om]=/.test(location.hash)) {
     let last = null; try { last = localStorage.getItem('qps-last-q'); } catch(e) {}
     const list = openOrders();
     const pick = list.includes(last) ? last : list[list.length - 1];
@@ -1542,22 +1603,33 @@
   function readPasteBox(text) {
     const prods = splitPasted(text).map(p => ({...p, brand: brandOf(p.title)}));
     prods.forEach(p => catRemember({sku: p.f.SKU, fnsku: p.f.FNSKU, asin: p.f.ASIN, ean: p.f.EAN || p.f.UPC, title: p.fullTitle || p.title, brand: p.brand}));
-    if (prods.length) return {prods, notFound: [], placeholders: 0};
-    const out = [], notFound = []; let placeholders = 0;
+    if (prods.length) return {prods, notFound: [], placeholders: 0, notAmz: [], noFba: []};
+    // notAmz = codes that are not in our Amazon product list; noFba = known, but without FNSKU or SKU (no FBA listing)
+    const out = [], notFound = [], notAmz = [], noFba = []; let placeholders = 0;
     String(text).split(/[\s,;]+/).map(s => s.trim()).filter(Boolean).forEach(code => {
       const c = catFind(code);
-      if (c) out.push({title: shortTitle(c.title), brand: c.brand || brandOf(c.title), eans: c.eans || [],
-                       f: {SKU: c.sku, FNSKU: c.fnsku, ASIN: c.asin, EAN: c.ean}});
-      else if (/^X00[0-9A-Z]{7}$/i.test(code)) { out.push({title: '', brand: '', eans: [], f: {FNSKU: code.toUpperCase()}}); placeholders++; }
-      else notFound.push(code);
+      if (c) {
+        out.push({title: shortTitle(c.title), brand: c.brand || brandOf(c.title), eans: c.eans || [],
+                  f: {SKU: c.sku, FNSKU: c.fnsku, ASIN: c.asin, EAN: c.ean}});
+        if (!c.fnsku || !c.sku) noFba.push(`${code} (${shortTitle(c.title) || 'no name'}: no ${!c.fnsku ? 'FNSKU' : 'SKU'})`);
+      }
+      else if (/^X00[0-9A-Z]{7}$/i.test(code)) { out.push({title: '', brand: '', eans: [], f: {FNSKU: code.toUpperCase()}}); placeholders++; notAmz.push(code); }
+      else if (/^B0[0-9A-Z]{8}$/i.test(code)) { out.push({title: '', brand: '', eans: [], f: {ASIN: code.toUpperCase()}}); placeholders++; notAmz.push(code); }
+      else { notFound.push(code); notAmz.push(code); }
     });
-    return {prods: out, notFound, placeholders};
+    return {prods: out, notFound, placeholders, notAmz, noFba};
+  }
+  // loud warning: the code is not one of our Amazon products (not in the daily product list from Stockpilot / Seller Central)
+  function notOnAmazonAlert(notAmz, noFba) {
+    const of = catMeta.generated ? ` of ${fmtDate(new Date(catMeta.generated.replace(' ', 'T')))}` : '';
+    return (notAmz.length ? `⚠ NOT ON AMAZON: ${notAmz.join(', ')} is not in your Amazon product list${of}. Check the code, or create the listing in Seller Central first.` : '')
+      + (noFba.length ? `${notAmz.length ? ' ' : ''}⚠ NO FBA LISTING: ${noFba.join(', ')} — cannot go in the Amazon manifest.` : '');
   }
   function amzAdd() {
-    const {prods, notFound, placeholders} = readPasteBox($('#paste').value);
+    const {prods, notFound, placeholders, notAmz, noFba} = readPasteBox($('#paste').value);
     if (!prods.length) {
-      say(notFound.length ? `Not in the product memory: ${notFound.join(', ')} — paste the full details from Seller Central once.`
-        : 'Nothing found — paste the product details from Seller Central, or an FNSKU (X00…), SKU or EAN.', 'bad');
+      say(notFound.length ? `${notOnAmazonAlert(notAmz, noFba)} If it is a new listing, paste its full details from Seller Central once.`
+        : 'Nothing found — paste the product details from Seller Central, or an ASIN (B0…), FNSKU (X00…), SKU or EAN.', 'bad');
       beep(false); return;
     }
     const qty = Math.max(1, Math.round(toNum($('#addqty').value)) || 1);
@@ -1567,13 +1639,15 @@
     const iBrand = H('BRAND'), iOther = H('OTHER EANS');
     let added = 0, more = 0, filled = 0;
     prods.forEach(({title, f, brand, eans}) => {
-      const same = rows.findIndex(r => (f.SKU && iSku >= 0 && r[iSku] === f.SKU) || (f.FNSKU && iF >= 0 && r[iF] === f.FNSKU));
+      const same = rows.findIndex(r => (f.SKU && iSku >= 0 && r[iSku] === f.SKU) || (f.FNSKU && iF >= 0 && r[iF] === f.FNSKU)
+        || (f.ASIN && iAsin >= 0 && r[iAsin] === f.ASIN));
       if (same >= 0) {
         const r = rows[same];   // also fill details that were missing (product first added by FNSKU only)
         const wasBare = iSku >= 0 && !r[iSku] && !!f.SKU;   // pasting details for an FNSKU-only line only fills it in
         if (iOther >= 0 && eans && eans.length && !r[iOther]) r[iOther] = eans.join('; ');
-        if (iName >= 0 && title && (!r[iName] || r[iName] === r[iF] || broken(r[iName]))) r[iName] = title;
+        if (iName >= 0 && title && (!r[iName] || r[iName] === r[iF] || (iAsin >= 0 && r[iName] === r[iAsin]) || broken(r[iName]))) r[iName] = title;
         if (iSku >= 0 && f.SKU && !r[iSku]) r[iSku] = f.SKU;
+        if (iF >= 0 && f.FNSKU && !r[iF]) r[iF] = f.FNSKU;
         if (iAsin >= 0 && f.ASIN && !r[iAsin]) r[iAsin] = f.ASIN;
         if (iEan >= 0 && (f.EAN || f.UPC) && !r[iEan]) r[iEan] = f.EAN || f.UPC;
         if (iBrand >= 0 && brand && !r[iBrand]) r[iBrand] = brand;
@@ -1581,7 +1655,7 @@
         r[iQty] = toNum(r[iQty]) + qty; more++; return;
       }
       const r = headers.map(() => '');
-      if (iName >= 0) r[iName] = title || f.SKU || f.FNSKU;
+      if (iName >= 0) r[iName] = title || f.SKU || f.FNSKU || f.ASIN;
       if (iBrand >= 0) r[iBrand] = brand || '';
       if (iEan >= 0) r[iEan] = f.EAN || f.UPC || '';
       if (iF >= 0) r[iF] = f.FNSKU || '';
@@ -1597,10 +1671,12 @@
     $('#paste').value = ''; $('#addqty').value = 1;
     $('#addnote').textContent = '';
     amzRefresh(); render();
-    say((added || more ? `Added ${added} product${added === 1 ? '' : 's'}${more ? `, ${more} already in the shipment got +${qty}` : ''} (${qty} each)` : '')
+    const warn = notAmz.length || noFba.length;
+    say((warn ? notOnAmazonAlert(notAmz, noFba) + ' — ' : '')
+      + (added || more ? `Added ${added} product${added === 1 ? '' : 's'}${more ? `, ${more} already in the shipment got +${qty}` : ''} (${qty} each)` : '')
       + (filled ? `${added || more ? ' — ' : '✓ '}details filled in for ${filled} product${filled === 1 ? '' : 's'} (quantity unchanged)` : '')
-      + (placeholders ? ` — ${placeholders} FNSKU not in the product memory yet: paste its details later to fill name/SKU (needed for the manifest)` : '')
-      + (notFound.length ? ` — not found: ${notFound.join(', ')}` : ''), placeholders || notFound.length ? 'part' : 'ok'); beep(true);
+      + (placeholders ? ` — ${placeholders} code${placeholders === 1 ? '' : 's'} added without details: paste its Seller Central details later to fill name/SKU (needed for the manifest)` : '')
+      + (notFound.length ? ` — not added: ${notFound.join(', ')}` : ''), warn ? 'bad' : 'ok'); beep(!warn);
     $('#paste').blur(); lock();
   }
   if (AMZ) {
