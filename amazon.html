@@ -16,6 +16,7 @@
     --bg:#f2f4f3; --card:#ffffff; --fg:#17201c; --mute:#5d6b65; --line:#d6ddd9; --head:#e7ecea;
     --accent:#0f6b5c; --accent-soft:#dff1ec;
     --ok:#cdeed3; --ok-ink:#17702f; --part:#fdf0bd; --part-ink:#8a6400; --bad:#ffd9d6; --bad-ink:#b3261e;
+    --hit:#0b3d91; --hit-ink:#ffffff; --qty:#ffd60a; --qty-ink:#111111;
     /* box colours (Box 1 blue, 2 purple, 3 orange, 4 teal, 5 pink, 6 green, 7 indigo, 8 brown) + Amazon orange */
     --b1:#2563eb; --b2:#9333ea; --b3:#ea580c; --b4:#0e8a9e; --b5:#db2777; --b6:#4d8a12; --b7:#4f46e5; --b8:#a16207; --on-bx:#ffffff;
     --amz:#ff9900; --amz-ink:#1f1300;
@@ -26,11 +27,13 @@
     --bg:#121715; --card:#1a211e; --fg:#e6ece9; --mute:#93a39c; --line:#2d3833; --head:#222b27;
     --accent:#4fc2a8; --accent-soft:#183a32;
     --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92;
+    --hit:#1f56c9; --hit-ink:#ffffff; --qty:#ffd60a; --qty-ink:#111111;
     --b1:#6ea2ff; --b2:#c58cff; --b3:#ff9b5c; --b4:#3fd0e0; --b5:#ff7ab8; --b6:#9fdc5a; --b7:#9a94ff; --b8:#e0b04a; --on-bx:#0b0f0d; color-scheme:dark }}
   :root[data-theme="dark"]{
     --bg:#121715; --card:#1a211e; --fg:#e6ece9; --mute:#93a39c; --line:#2d3833; --head:#222b27;
     --accent:#4fc2a8; --accent-soft:#183a32;
     --ok:#1d4a2a; --ok-ink:#8fe0a4; --part:#4a3d10; --part-ink:#f2cf66; --bad:#4f1f1c; --bad-ink:#ff9b92;
+    --hit:#1f56c9; --hit-ink:#ffffff; --qty:#ffd60a; --qty-ink:#111111;
     --b1:#6ea2ff; --b2:#c58cff; --b3:#ff9b5c; --b4:#3fd0e0; --b5:#ff7ab8; --b6:#9fdc5a; --b7:#9a94ff; --b8:#e0b04a; --on-bx:#0b0f0d; color-scheme:dark }
   /* Each scanner has its own look: Qogita = green with a "Q" logo, Amazon FBA = navy + orange with an "A" logo */
   :root{ --logo-bg:var(--accent); --logo-ink:#ffffff; --brandline:var(--accent) }
@@ -171,6 +174,9 @@
   #msg.ok{background:var(--ok);border-left-color:var(--ok-ink)}
   #msg.part{background:var(--part);border-left-color:var(--part-ink)}
   #msg.bad{background:var(--bad);border-left-color:var(--bad-ink)}
+  /* Qogita: the product just scanned — strong blue band, quantity in a big yellow badge */
+  #msg.hit{background:var(--hit);color:var(--hit-ink);border-left-color:var(--qty);display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:22px}
+  #msg .hitqty{background:var(--qty);color:var(--qty-ink);border-radius:10px;padding:2px 14px;font-size:30px;font-weight:800;white-space:nowrap}
   .bar{height:10px;border-radius:5px}
   .bar>div{background:linear-gradient(90deg,var(--accent),var(--ok-ink))}
   /* box tabs: each box in its own colour; the one you pack is filled */
@@ -259,6 +265,7 @@
     #ready{padding:0 8px;font-size:12px}
     #ready #readytxt{display:none}
     #msg{font-size:15px;min-height:20px}
+    #msg.hit{font-size:17px} #msg .hitqty{font-size:22px}
     .stats{font-size:13px;gap:10px}
     .bar{height:5px}
     /* camera: a short strip instead of a full-height picture */
@@ -287,7 +294,7 @@
       <button id="manifest" hidden title="Amazon Send to Amazon upload file with the scanned quantities per SKU">Amazon manifest</button>
       <button id="boxexport" hidden title="Excel with how many of each SKU are in Box 1, Box 2, …">Box contents</button>
       <button id="share" title="Make a link / QR code that opens this order on a phone">Share link</button>
-      <button id="reset">Reset scans</button>
+      <button id="reset">Reset scans and shipment</button>
     </div>
   </div>
   <div class="scanrow">
@@ -323,7 +330,7 @@
       </div>
     </div>
   </div>
-  <div id="confirmReset" hidden>Clear all scans for this order? <button id="yesReset">Yes, clear</button><button id="noReset">Cancel</button></div>
+  <div id="confirmReset" hidden><span id="resetq">Clear all scans for this order?</span> <button id="yesReset">Yes, clear</button><button id="resetAll" hidden>Clear scans + shipment — start new</button><button id="noReset">Cancel</button></div>
   <div id="msg"></div>
   <div class="stats" id="stats"></div>
   <div class="bar"><div id="bar"></div></div>
@@ -1001,6 +1008,8 @@
     }
     setCount(i, need(i));
     say(`✓ ${label(i)} — ${counts[i]} / ${need(i)}`, 'ok'); beep(true);
+    const m = $('#msg'); m.className = 'hit';   // big coloured band: name + quantity to pick
+    m.innerHTML = `<span class="hitqty">${counts[i]} / ${need(i)}</span><span>✓ ${esc(label(i))}</span>`;
     render(true);
   }
   // every change remembers the previous count, so Undo puts it back exactly
@@ -1022,7 +1031,25 @@
   $('#undo').onclick = undo;
 
   // in-page confirmation (works in every browser and inside the Claude viewer)
-  $('#reset').onclick = () => { if (rows.length) $('#confirmReset').hidden = false; };
+  $('#reset').onclick = () => {
+    if (!rows.length) return;
+    if (AMZ) {   // Amazon: clear only the boxes (keep the plan), or throw away the whole shipment and start a new empty one
+      $('#resetq').textContent = `Reset shipment "${fileName}"?`;
+      $('#yesReset').textContent = 'Clear scans only (keep products)';
+      $('#resetAll').hidden = false;
+    }
+    $('#confirmReset').hidden = false;
+  };
+  $('#resetAll').onclick = () => {
+    const old = fileName;
+    try { localStorage.removeItem('qps:' + old); if (localStorage.getItem('qps-last-fba') === old) localStorage.removeItem('qps-last-fba'); } catch(e) {}
+    $('#confirmReset').hidden = true;
+    let name = 'FBA ' + today(), k = 2;
+    while (savedShipments().some(s => s.name === name)) name = `FBA ${today()} (${k++})`;
+    amzStartEmpty(name); store();
+    say(`Shipment "${old}" cleared — new empty shipment "${name}". Paste or scan the first product.`, 'ok');
+    $('#paste').focus();
+  };
   $('#noReset').onclick = () => { $('#confirmReset').hidden = true; };
   $('#yesReset').onclick = () => {
     counts = rows.map(() => 0); history = []; unknown = {}; lastIdx = -1;
