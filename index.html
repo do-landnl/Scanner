@@ -237,6 +237,11 @@
   tr.part td.cnt b{background:color-mix(in srgb,var(--part-ink) 22%,var(--card))}
   tr.done td.cnt b{background:var(--ok-ink);color:var(--card)!important}
   tr.over td.cnt b,table.amz td.cnt b.neg{background:var(--bad-ink);color:var(--card)!important}
+  /* Qogita: the line just scanned gets the same look as the top band — blue row, big yellow quantity */
+  :root:not(.amz) tr.last td{background:var(--hit);color:var(--hit-ink);box-shadow:inset 0 3px 0 var(--qty),inset 0 -3px 0 var(--qty)}
+  :root:not(.amz) tr.last td *:not(button):not(b){color:var(--hit-ink)!important}
+  :root:not(.amz) tr.last td:first-child{border-left-color:var(--qty)!important}
+  :root:not(.amz) tr.last td.cnt b{background:var(--qty);color:var(--qty-ink)!important;font-size:20px}
   table.amz small.left{text-align:left;margin:3px 0 0 2px;font-size:12px}
   .rowact{display:flex;gap:6px;align-items:center;margin-top:6px}
   .rowact .addto{display:inline-block;margin:0;padding:4px 12px}
