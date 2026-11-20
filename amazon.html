@@ -177,6 +177,20 @@
   /* Qogita: the product just scanned — strong blue band, quantity in a big yellow badge */
   #msg.hit{background:var(--hit);color:var(--hit-ink);border-left-color:var(--qty);display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:22px}
   #msg .hitqty{background:var(--qty);color:var(--qty-ink);border-radius:10px;padding:2px 14px;font-size:30px;font-weight:800;white-space:nowrap}
+  /* FBA add: one card per added product with its codes in colour */
+  #msg .addcards{display:grid;gap:8px;margin-top:8px}
+  #msg .addcard{background:var(--card);color:var(--fg);border:1px solid var(--line);border-left:6px solid var(--amz);border-radius:10px;padding:8px 10px;display:grid;gap:6px}
+  #msg .acname{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:16px}
+  #msg .actag{background:var(--amz);color:var(--amz-ink);border-radius:6px;padding:1px 8px;font-size:13px;font-weight:800;white-space:nowrap}
+  #msg .acchips{display:flex;gap:6px;flex-wrap:wrap}
+  #msg .cchip{font:600 15px var(--mono);border-radius:7px;padding:3px 9px;display:inline-flex;gap:6px;align-items:baseline}
+  #msg .cchip i{font:700 11px var(--sans);font-style:normal;letter-spacing:.06em;opacity:.8}
+  #msg .c-asin{background:var(--amz);color:var(--amz-ink)}
+  #msg .c-fn{background:var(--accent);color:var(--card)}
+  #msg .c-ean{background:var(--ok);color:var(--ok-ink)}
+  #msg .c-sku{background:var(--head);color:var(--fg)}
+  #msg .cchip.none{background:var(--bad);color:var(--bad-ink)}
+  #msg .acmore{color:var(--mute);font-size:14px}
   .bar{height:10px;border-radius:5px}
   .bar>div{background:linear-gradient(90deg,var(--accent),var(--ok-ink))}
   /* box tabs: each box in its own colour; the one you pack is filled */
@@ -1670,6 +1684,7 @@
     const iName = headers.indexOf('name'), iEan = map.ean, iF = map.fnsku, iSku = H('SKU'), iAsin = H('ASIN'), iQty = map.qty;
     const iBrand = H('BRAND'), iOther = H('OTHER EANS');
     let added = 0, more = 0, filled = 0;
+    const shown = [];   // products to name in the message, with their codes in colour
     prods.forEach(({title, f, brand, eans}) => {
       const same = rows.findIndex(r => (f.SKU && iSku >= 0 && r[iSku] === f.SKU) || (f.FNSKU && iF >= 0 && r[iF] === f.FNSKU)
         || (f.ASIN && iAsin >= 0 && r[iAsin] === f.ASIN));
@@ -1683,8 +1698,8 @@
         if (iAsin >= 0 && f.ASIN && !r[iAsin]) r[iAsin] = f.ASIN;
         if (iEan >= 0 && (f.EAN || f.UPC) && !r[iEan]) r[iEan] = f.EAN || f.UPC;
         if (iBrand >= 0 && brand && !r[iBrand]) r[iBrand] = brand;
-        if (wasBare) { filled++; return; }
-        r[iQty] = toNum(r[iQty]) + qty; more++; return;
+        if (wasBare) { filled++; shown.push({r, tag: 'details filled in'}); return; }
+        r[iQty] = toNum(r[iQty]) + qty; more++; shown.push({r, tag: `+${qty} → ${r[iQty]}`}); return;
       }
       const r = headers.map(() => '');
       if (iName >= 0) r[iName] = title || f.SKU || f.FNSKU || f.ASIN;
@@ -1695,7 +1710,7 @@
       if (iAsin >= 0) r[iAsin] = f.ASIN || '';
       if (iOther >= 0) r[iOther] = (eans || []).join('; ');
       r[iQty] = qty;
-      rows.push(r); counts.push(0); boxes.push({}); added++;
+      rows.push(r); counts.push(0); boxes.push({}); added++; shown.push({r, tag: `NEW × ${qty}`});
     });
     catSave(); catCount();
     autoMap(); store();
@@ -1705,10 +1720,18 @@
     amzRefresh(); render();
     const warn = notAmz.length || noFba.length;
     say((warn ? notOnAmazonAlert(notAmz, noFba) + ' — ' : '')
-      + (added || more ? `Added ${added} product${added === 1 ? '' : 's'}${more ? `, ${more} already in the shipment got +${qty}` : ''} (${qty} each)` : '')
+      + (added ? `✓ Added ${added} product${added === 1 ? '' : 's'} (${qty} each)` : '')
+      + (more ? `${added ? ', ' : '✓ '}+${qty} for ${more} product${more === 1 ? '' : 's'} already in the shipment` : '')
       + (filled ? `${added || more ? ' — ' : '✓ '}details filled in for ${filled} product${filled === 1 ? '' : 's'} (quantity unchanged)` : '')
       + (placeholders ? ` — ${placeholders} code${placeholders === 1 ? '' : 's'} added without details: paste its Seller Central details later to fill name/SKU (needed for the manifest)` : '')
       + (notFound.length ? ` — not added: ${notFound.join(', ')}` : ''), warn ? 'bad' : 'ok'); beep(!warn);
+    // one coloured card per product: name + ASIN / FNSKU / EAN (+ SKU), so you see exactly what went in
+    const chip = (cls, k, v) => `<span class="cchip ${cls}${v ? '' : ' none'}"><i>${k}</i>${esc(v || 'missing')}</span>`;
+    const cards = shown.slice(0, 12).map(({r, tag}) => `<div class="addcard"><div class="acname"><span class="actag">${esc(tag)}</span><b>${esc(r[iName] || '')}</b></div>`
+      + `<div class="acchips">${chip('c-asin', 'ASIN', iAsin >= 0 && r[iAsin])}${chip('c-fn', 'FNSKU', iF >= 0 && r[iF])}`
+      + `${chip('c-ean', 'EAN', iEan >= 0 && r[iEan])}${chip('c-sku', 'SKU', iSku >= 0 && r[iSku])}</div></div>`).join('')
+      + (shown.length > 12 ? `<div class="acmore">… and ${shown.length - 12} more</div>` : '');
+    if (cards) $('#msg').insertAdjacentHTML('beforeend', `<div class="addcards">${cards}</div>`);
     $('#paste').blur(); lock();
   }
   if (AMZ) {
